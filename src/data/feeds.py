@@ -39,7 +39,8 @@ class TushareClient:
     """
 
     def __init__(self, token: str | None = None, bucket: TokenBucket | None = None,
-                 max_retries: int = 3, timeout: int = 30):
+                 max_retries: int = 3, timeout: int = 30,
+                 base_url: str | None = "https://api.tushare.pro/dataapi"):
         import socket
         import tushare as ts
 
@@ -49,6 +50,10 @@ class TushareClient:
             self.pro = ts.pro_api(token or load_token(), timeout=timeout)
         except TypeError:                       # 旧版 pro_api 不接受 timeout 参数
             self.pro = ts.pro_api(token or load_token())
+        # 默认走 https 加密 token(与 api.waditu.com 同服务器,不为提速,纯为不在跨境链路上明文传 token)。
+        # 跨境若发现 https 更不稳,可传 base_url="http://api.waditu.com/dataapi" 切回。
+        if base_url:
+            self.pro._DataApi__http_url = base_url
         self.bucket = bucket or TokenBucket.for_hard_limit(500)   # 硬顶 500 → 留弹性
         self.max_retries = max_retries
 
