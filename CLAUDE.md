@@ -43,7 +43,7 @@ MonkeyBench 是一个**个人量化研究 / 验证工具**:让多套策略和一
 - **前端**:**HTMX + Tailwind**(服务端渲染 HTML 片段;审美用 Tailwind 组件库自由掌控)。K线/高交互区 = lightweight-charts 的 JS 孤岛(web component)按需嵌入。**不用 Reflex/SvelteKit/Streamlit**。
 - **LLM 洞见**:**agent + skill 工具链(非 NL2SQL)**。工具核心一份 Python 实现,多协议暴露(OpenAI function-calling + 可选 MCP)。模型走 OpenAI 兼容 API,可换(DeepSeek V4 / GLM-5.2 / MiniMax-3)。
 - **调度**:APScheduler(每日增量 backfill + 纸面实盘)。
-- **部署**:exe.dev 单 VPS + docker compose;TLS/公网分享由平台负责,app 层加简单 auth 挡公网(不审计、不做账号体系)。
+- **部署**:exe.dev 单 VPS + docker compose;域名 `monkey.operonsys.com`(根 = landing 单页,`/app` = 应用);TLS/公网分享由平台负责,app 层加简单 auth 挡公网(不审计、不做账号体系)。
 
 ---
 
@@ -74,6 +74,7 @@ RDP.md  CLAUDE.md
 ## 数据源策略
 
 - **优先级**:Tushare Pro(高级,**主**)→ akshare → baostock(fallback)。
+- **Tushare 档位**:本项目基于 **8000 积分/年**版本(500 次/分限速 + 完整接口:日线 / 财务 / 宏观 / ST / 概念成分 / 资金流 / 筹码 / 量化因子等)。**免费 / 低积分版接口与限速受限,无法使用全部功能。**
 - `SourceRouter` 按 `(symbol, field, range)` 取数,失败逐级降级,记录每条数据的 **provenance**。
 - **缓存优先**:先查本地 DuckDB/parquet,miss 才打 API。
 - backfill 目标 ≥10 年全市场(含退市),token-bucket 限速,checkpoint 可续。
