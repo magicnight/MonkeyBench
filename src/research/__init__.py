@@ -6,6 +6,7 @@
 
 后续(M3):Qlib 工作流封装(walk-forward / purge+embargo / DSR/PBO)产出信号文件。
 """
+from .report import assemble_report, radar_svg, score_table_md
 from .scores import (altman_z_score, composite_score, cross_section_rank,
                      cross_section_zscore, piotroski_f_score)
 from .signal_strategy import SignalStrategy
@@ -14,4 +15,5 @@ __all__ = [
     "piotroski_f_score", "altman_z_score",
     "cross_section_rank", "cross_section_zscore", "composite_score",
     "SignalStrategy",
+    "radar_svg", "score_table_md", "assemble_report",
 ]
