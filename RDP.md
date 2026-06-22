@@ -116,6 +116,30 @@
 
 > Tushare 即便高级版也有每分钟调用与积分限制,backfill 必须**慢**、必须**可续**。不要写成一把梭的脚本。
 
+### 5.4 数据集清单(8000 积分 + vip,要拉什么)
+
+> 8000 积分覆盖几乎所有日频接口(除分钟线)且高频次;vip 接口可按 period/trade_date 一次拿全市场。
+> 高效循环:行情/估值**按交易日**、财务**按报告期**、引用类**按需**。瓶颈是跨境网络(慢),非权限。
+
+**已落盘**:日线 `daily`+复权 `adj_factor`、估值 `daily_basic`、财务四表 `income`/`balancesheet`/`cashflow`/`fina_indicator`(vip)、基础 `stock_basic`、日历 `trade_cal`。
+
+**待补(按价值优先级)**:
+
+| 优先 | 数据集 | 接口 | 用途 |
+|---|---|---|---|
+| 高 | 指数日线 | `index_daily`(000300/000905/000852…) | **竞技场真实基准**(全市场等权资金受限,指数才合理) |
+| 高 | 申万行业分类 | `index_classify`+`index_member_all` | 同业对标的"行业"、因子行业中性化 |
+| 高 | 量化因子库 | `stk_factor_pro` | 研究层现成因子原料 |
+| 高 | 曾用名 | `namechange` | **PIT 板块判定**(历史某日是否 ST,防用未来名字) |
+| 中 | 分红送股 | `dividend` | 公司分析、复权校验 |
+| 中 | 主营构成 / 业绩预告快报 | `fina_mainbz` / `forecast` / `express` | DD 报告、预期因子 |
+| 中 | 龙虎榜/融券/资金流/筹码 | `top_list`/`margin`/`moneyflow`/`cyq_perf` | 情绪/微观因子、报告 |
+| 中 | 质押/解禁/回购/增减持 | `pledge_stat`/`share_float`/`repurchase`/`stk_holdertrade` | 风险因子、报告 |
+| 低 | 公司信息/管理层 | `stock_company`/`stk_managers` | DD 报告 |
+| 低 | 宏观 | GDP/CPI/PPI/`shibor_lpr`/社融 | 择时/宏观因子 |
+
+> 节奏:当前全量(日线/估值/财务)跑完后,按上表优先级逐步补;每个数据集复用 backfill 的断点续传 + 限速 + provenance。
+
 ---
 
 ## 6. 合规(自用)
