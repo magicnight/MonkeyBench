@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from insight.agent import LLM
-from insight.report_agent import build_dd_agent, company_dd_report
+from insight.report_agent import build_dd_agent, company_dd_report, dd_report_from_data
 from test_skills import make_cache
 
 
@@ -63,7 +63,20 @@ def test_build_dd_agent_has_tools():
     agent = build_dd_agent(cache, MockLLM())
     assert len(agent.registry.openai_tools()) == 5
     assert "peer_comparison" in agent.registry.names()
-    assert "DD" in agent.system and "铁律" not in agent.system or agent.system  # system 已注入
+    assert "DD" in agent.system                          # system 已注入
+    cache.close()
+
+
+def test_dd_report_from_data_fallback():
+    """无 LLM 降级报告:工具数据 + 模板 → Markdown(含雷达图 + 对标表)。"""
+    cache = make_cache()
+    md = dd_report_from_data(cache, "688205.SH", peers=["600519.SH"])
+    assert "德科立" in md
+    assert "营收" in md and "9.34" in md                 # 财务数据进表
+    assert "<svg" in md                                  # 财务画像雷达图
+    assert "同业对标" in md and "贵州茅台" in md          # 自定义对标表
+    assert "综合质量分" in md
+    assert dd_report_from_data(cache, "000000.SZ").startswith("# 000000.SZ")  # 不存在兜底
     cache.close()
 
 
