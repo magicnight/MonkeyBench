@@ -22,13 +22,22 @@ from .ratelimit import TokenBucket
 
 
 def load_token(env_path: str | Path = ".env") -> str | None:
+    return _read_env("TUSHARE_API_KEY", env_path)
+
+
+def load_proxy(env_path: str | Path = ".env") -> str | None:
+    """读 .env 的 PROXY_URL(香港中转代理,大幅提速跨境访问 tushare)。"""
+    return _read_env("PROXY_URL", env_path)
+
+
+def _read_env(key: str, env_path: str | Path = ".env") -> str | None:
     p = Path(env_path)
     if p.exists():
         for line in p.read_text().splitlines():
             line = line.strip()
-            if line.startswith("TUSHARE_API_KEY") and "=" in line:
+            if line.startswith(key) and "=" in line:
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
-    return os.environ.get("TUSHARE_API_KEY")
+    return os.environ.get(key)
 
 
 class TushareClient:
@@ -40,12 +49,18 @@ class TushareClient:
 
     def __init__(self, token: str | None = None, bucket: TokenBucket | None = None,
                  max_retries: int = 3, timeout: int = 30,
-                 base_url: str | None = "https://api.tushare.pro/dataapi"):
+                 base_url: str | None = "https://api.tushare.pro/dataapi",
+                 proxy: str | None = None):
         import socket
         import tushare as ts
 
         # 兜底:防止某次请求静默 hang(tushare 不总暴露 timeout)。超时 → 抛异常 → 触发退避重试。
         socket.setdefaulttimeout(timeout)
+        # 香港中转代理(若 .env 配了 PROXY_URL):设进程级环境变量,requests 自动走 → 跨境提速 ~10×。
+        proxy = proxy if proxy is not None else load_proxy()
+        if proxy:
+            os.environ["HTTP_PROXY"] = proxy
+            os.environ["HTTPS_PROXY"] = proxy
         try:
             self.pro = ts.pro_api(token or load_token(), timeout=timeout)
         except TypeError:                       # 旧版 pro_api 不接受 timeout 参数
