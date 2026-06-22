@@ -117,9 +117,11 @@ class CrossSectionalMomentum(Strategy):
         for s in ctx.universe:
             hist = ctx.history(s, self.lookback)
             if len(hist) < self.lookback:
-                return []  # 历史不足,先不动
+                continue  # 跳过历史不足/未上市/停牌的票,而非放弃整轮(多票真实数据必需)
             ret = hist[-1] / hist[0] - 1.0
             scored.append((ret, s))
+        if not scored:
+            return []
         scored.sort(reverse=True)
         winners = [s for _, s in scored[: self.top_k]]
         return _rebalance_to(ctx, winners)

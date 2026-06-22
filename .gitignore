@@ -1,4 +1,4 @@
-# 机密 —— 绝不入库(token / 凭证)
+# 环境设定
 .env
 .env.*
 !.env.example
@@ -15,7 +15,7 @@ dist/
 venv/
 .uv/
 
-# 本地行情缓存 —— 绝不入库(合规:不分发原始厂商付费数据)
+# 本地行情缓存(合规:不分发原始厂商付费数据)
 data/cache/*
 !data/cache/.gitkeep
 *.duckdb
@@ -29,3 +29,8 @@ data/cache/*
 .DS_Store
 .idea/
 .vscode/
+
+# Agent
+.omc/
+.claude/
+.agent/

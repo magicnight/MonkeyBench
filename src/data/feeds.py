@@ -39,10 +39,16 @@ class TushareClient:
     """
 
     def __init__(self, token: str | None = None, bucket: TokenBucket | None = None,
-                 max_retries: int = 3):
+                 max_retries: int = 3, timeout: int = 30):
+        import socket
         import tushare as ts
 
-        self.pro = ts.pro_api(token or load_token())
+        # 兜底:防止某次请求静默 hang(tushare 不总暴露 timeout)。超时 → 抛异常 → 触发退避重试。
+        socket.setdefaulttimeout(timeout)
+        try:
+            self.pro = ts.pro_api(token or load_token(), timeout=timeout)
+        except TypeError:                       # 旧版 pro_api 不接受 timeout 参数
+            self.pro = ts.pro_api(token or load_token())
         self.bucket = bucket or TokenBucket.for_hard_limit(500)   # 硬顶 500 → 留弹性
         self.max_retries = max_retries
 
@@ -86,11 +92,13 @@ class TushareAFeed(DataFeed):
     """单票或多票 A 股 feed。缓存优先;build() 返回前复权 MarketData。"""
 
     def __init__(self, ts_codes, cache: MarketCache | None = None,
-                 client: TushareClient | None = None, refresh: bool = False):
+                 client: TushareClient | None = None, refresh: bool = False,
+                 start: str | None = None):
         self.ts_codes = [ts_codes] if isinstance(ts_codes, str) else list(ts_codes)
         self.cache = cache or MarketCache()
         self.client = client
         self.refresh = refresh
+        self.start = start   # 'YYYYMMDD':只保留 >= start 的 bar(限制回测窗口)
 
     def _ensure(self, ts_code: str) -> None:
         _, _, n = self.cache.coverage(ts_code)
@@ -108,6 +116,8 @@ class TushareAFeed(DataFeed):
         for code in self.ts_codes:
             self._ensure(code)
             df = self.cache.get_daily(code)
+            if self.start:
+                df = df[df["trade_date"] >= self.start]
             if len(df) == 0:
                 continue
             f = df["adj_factor"].ffill().fillna(1.0)
