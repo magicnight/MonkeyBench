@@ -155,7 +155,7 @@
 > **数字一律来自工具,不让 LLM 自己算/编**。
 
 - **目标**:给定一家(或一组)A 股公司 → 拉全维度数据 → 算成熟综合指标 + 同业对标 → LLM 生成结构化分析报告。
-- **输入**:`ts_code`;可选 对标范围(默认同行业)、as-of 日期(point-in-time)。
+- **输入**:`ts_code`;对标范围(默认同申万行业,**支持自定义对标组**,如指定几家竞品)、as-of 日期(PIT)。
 - **数据维度**(Tushare 权限内,从 DuckDB 读):基础(行业/市值/ST)、行情(动量/波动/回撤)、**财务(PIT,用 ann_date)**、估值(PE/PB/PS/股息)、特色(概念/资金流/筹码/龙虎榜/融券/量化因子)。
 - **综合指标层(确定性,研究层)**:
   - **Piotroski F-Score**(0–9 财务健康,等权)、**AQR QMJ**(盈利+成长+安全+分红,四维 rank 加权)、**Greenblatt Magic Formula**(ROC+EY 排名)、**Altman Z-Score**(破产距离)、自定义综合质量分。
@@ -163,9 +163,10 @@
 - **LLM 报告层(agent + skill)**:
   - 确定性工具(纯 Python,内部查 DuckDB):`company_profile` / `financials`(PIT) / `composite_scores` / `peer_percentile` / `price_action` / `special_data`。
   - agent(OpenAI 兼容,DeepSeek 等)tool-use 循环编排 → 解读 → 撰写;**工具核心一份,多协议暴露**(function-calling + 可选 MCP)。
-  - 报告结构:公司概览 → 财务健康(各分 + 解读) → 同业对标(百分位) → 估值 → 风险点 → 综合结论。
+  - **DD 式长报告**(尽调级,逐项详细展开):公司概览 → 业务/行业 → 财务健康(各综合分 + 三表趋势 + 解读) → 同业对标(百分位 + 自定义对标组) → 估值 → 资金/筹码/龙虎榜 → 风险点 → 综合结论。
 - **铁律呼应**:LLM 不碰 SQL、数字全来自工具;报告标注 as-of(回溯报告不用未来数据);**非投资建议**(含免责)。
-- **与架构关系**:复用数据层 + 研究层(综合分也可喂 `CompositeScoreStrategy` 上竞技场) + 洞见层;Web `/app` 里一个页面:输入公司 → 报告 + 评分雷达图。
+- **输出形式(都要)**:Web `/app` 页面内渲染(配**评分雷达图**)+ 可**导出 Markdown / PDF**。
+- **与架构关系**:复用数据层 + 研究层(综合分也可喂 `CompositeScoreStrategy` 上竞技场) + 洞见层。
 
 ---
 
