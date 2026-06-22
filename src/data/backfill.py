@@ -43,7 +43,7 @@ def quarters(start: str, end: str) -> list:
     return [q for q in qs if start <= q <= end]
 
 
-def _by_date(cache, client, days, dataset, api, table=None, by_col=None):
+def _by_date(cache, client, days, dataset, api, table=None, by_col=None, text_cols=None):
     """按交易日逐日拉某接口(全市场)→ 落库。daily 走 upsert_daily,其余走 upsert_table。"""
     done = cache.done_codes(dataset)
     todo = [d for d in days if d not in done]
@@ -60,6 +60,10 @@ def _by_date(cache, client, days, dataset, api, table=None, by_col=None):
                 n = cache.upsert_daily(merged)
             else:
                 df = client.fetch(api, trade_date=d)
+                if text_cols:                       # 强制文本列为 string:防 upsert 把"某期全空"的文本列误判成数值
+                    for c in text_cols:
+                        if c in df.columns:
+                            df[c] = df[c].astype("string")
                 n = cache.upsert_table(table, df, by_col, d)
             cache.log_backfill(dataset, d, "ok", n); ok += 1; rows += n
         except Exception as e:
@@ -103,6 +107,65 @@ def backfill_financials(cache: MarketCache, client: TushareClient,
             cache.log_backfill("financials", q, "failed", 0); failed += 1
             print(f"  ✗ {q}: {str(e)[:60]}")
     print(f"[financials] 完成:ok {ok}, failed {failed}")
+
+
+INDEX_CODES = [   # 主流宽基指数(竞技场真实基准)
+    ("000001.SH", "上证指数"), ("000300.SH", "沪深300"), ("000905.SH", "中证500"),
+    ("000852.SH", "中证1000"), ("399006.SZ", "创业板指"), ("000016.SH", "上证50"),
+]
+
+
+def backfill_disclosure(cache, client, start, end, force=False):
+    """按报告期拉 disclosure_date(财报披露计划/实际日)—— PIT 财务的'可知日',防前视。"""
+    qs = quarters(start, end)
+    done = set() if force else cache.done_codes("disclosure")
+    todo = [q for q in qs if q not in done]
+    print(f"[disclosure] 报告期 {len(qs)} | 待拉 {len(todo)}")
+    ok = failed = 0
+    for q in todo:
+        try:
+            df = client.fetch("disclosure_date", end_date=q)
+            n = cache.upsert_table("disclosure_date", df, "end_date", q)
+            cache.log_backfill("disclosure", q, "ok", n); ok += 1
+        except Exception as e:
+            cache.log_backfill("disclosure", q, "failed", 0); failed += 1
+            print(f"  ✗ {q}: {str(e)[:60]}")
+    print(f"[disclosure] 完成:ok {ok}, failed {failed}")
+
+
+def backfill_indices(cache, client, start, end, force=False):
+    """宽基指数日线(逐指数)+ 申万 L1 行业分类/成分(一次性,做行业中性化用)。"""
+    done = set() if force else cache.done_codes("index_daily")
+    for code, name in INDEX_CODES:
+        if code in done:
+            continue
+        try:
+            df = client.fetch("index_daily", ts_code=code, start_date=start, end_date=end)
+            n = cache.upsert_table("index_daily", df, "ts_code", code)
+            cache.log_backfill("index_daily", code, "ok", n)
+            print(f"  ✓ index_daily {code} {name}: {n} 行")
+        except Exception as e:
+            cache.log_backfill("index_daily", code, "failed", 0)
+            print(f"  ✗ index_daily {code}: {str(e)[:60]}")
+    try:
+        cls = client.fetch("index_classify", level="L1", src="SW2021")
+        cache.con.execute("DROP TABLE IF EXISTS index_classify")
+        cache.upsert_table("index_classify", cls)
+        print(f"  ✓ index_classify(申万L1): {len(cls)} 行")
+        done_m = set() if force else cache.done_codes("index_member")
+        for l1 in cls["index_code"].tolist():
+            if l1 in done_m:
+                continue
+            try:
+                m = client.fetch("index_member_all", l1_code=l1)
+                n = cache.upsert_table("index_member", m, "l1_code", l1)
+                cache.log_backfill("index_member", l1, "ok", n)
+            except Exception as e:
+                cache.log_backfill("index_member", l1, "failed", 0)
+                print(f"  ✗ index_member {l1}: {str(e)[:50]}")
+        print(f"  ✓ index_member: {len(cls)} 个 L1 行业成分")
+    except Exception as e:
+        print(f"  ✗ index_classify/member: {str(e)[:60]}")
 
 
 def main():
