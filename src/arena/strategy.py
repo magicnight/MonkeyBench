@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from .market import MarketRules, Order, RuleBook
 from .portfolio import Portfolio
@@ -19,12 +19,14 @@ class Context:
     `ctx.size_buy(budget, price, sym)`。
     """
 
-    def __init__(self, data, index: int, pf: Portfolio, rulebook: RuleBook, account_id: str):
+    def __init__(self, data, index: int, pf: Portfolio, rulebook: RuleBook,
+                 account_id: str, last_close: Optional[Dict[str, float]] = None):
         self._data = data            # MarketData
         self._i = index
         self._pf = pf
         self._book = rulebook
         self.account_id = account_id
+        self._last_close = last_close or {}   # 最后已知价(停牌/退市持仓估值用)
 
     @property
     def now(self) -> str:
@@ -60,8 +62,8 @@ class Context:
         return self._pf.sellable(symbol)
 
     def equity(self) -> float:
-        prices = {s: (self.price(s) or 0.0) for s in self.universe}
-        return self._pf.equity(prices)
+        """用最后已知价估值(停牌/退市持仓不蒸发)。"""
+        return self._pf.equity(self._last_close)
 
     # --- 工具 ---
     def size_buy(self, budget: float, price: float, symbol: str) -> int:

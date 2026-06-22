@@ -7,11 +7,13 @@
     3. 用 D 的【收盘】给各账号估值,记权益曲线
     4. 各账号看 D 的收盘做决策 → 产生挂到 D+1 的单
 最后一根 bar 的决策无害地丢弃(没有下一根可成交)。
+
+估值用 forward-fill 的"最后已知收盘价":停牌/退市持仓按最后价 mark,而非蒸发为 0。
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .datafeed import MarketData
 from .engine import MatchingEngine
@@ -46,12 +48,15 @@ class Arena:
             acc.strategy.reset()
         # 每个账号的规则解析器:A股 AShareRuleBook 按板块,其余 StaticRuleBook
         books = {acc.account_id: as_rulebook(acc.rules) for acc in self.accounts}
+        # forward-fill:截至当前每票最后已知收盘价。停牌/退市持仓据此估值,不蒸发为 0。
+        last_close: Dict[str, float] = {}
 
         n = len(self.data.dates)
         for i in range(n):
             date = self.data.dates[i]
             opens = self.data.opens(i)
             closes = self.data.closes(i)
+            last_close.update(closes)   # 当日有 bar 的票刷新最后价
 
             # 1) 新交易日:解锁
             for acc in self.accounts:
@@ -69,16 +74,16 @@ class Arena:
                                      acc.portfolio, self.log, date)
                 acc.pending = []
 
-            # 3) 用今日收盘估值,记权益
+            # 3) 用「最后已知价」估值,记权益(停牌/退市持仓不蒸发)
             for acc in self.accounts:
-                eq = acc.portfolio.equity(closes)
+                eq = acc.portfolio.equity(last_close)
                 acc.equity_curve.append((date, eq))
 
             # 4) 今日收盘后决策,挂到明日
             if i < n - 1:  # 最后一根不再决策
                 for acc in self.accounts:
-                    ctx = Context(self.data, i, acc.portfolio,
-                                  books[acc.account_id], acc.account_id)
+                    ctx = Context(self.data, i, acc.portfolio, books[acc.account_id],
+                                  acc.account_id, last_close)
                     acc.pending = acc.strategy.on_bar(ctx) or []
 
         return self
