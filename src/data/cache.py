@@ -127,6 +127,16 @@ class MarketCache:
         按 by_col=by_val 粒度先删后插(幂等,支持断点续传重跑)。"""
         if df is None or len(df) == 0:
             return 0
+        import pandas as pd
+        df = df.copy()
+        # 数值列统一 float64;tushare 含 None 的金额列会存成 object,也要转 float —— 否则 DuckDB
+        # 跨批次推断类型不一致(首批空/窄、后批大额),报 Conversion Error。
+        for col in df.select_dtypes(include=["number"]).columns:
+            df[col] = df[col].astype("float64")
+        for col in df.select_dtypes(include=["object"]).columns:
+            conv = pd.to_numeric(df[col], errors="coerce")
+            if conv.notna().any() or df[col].isna().all():   # 数值列 或 全空列 → float;纯文本列(有非空但转失败)保留
+                df[col] = conv
         self.con.register("_df", df)
         self.con.execute(f'CREATE TABLE IF NOT EXISTS "{table}" AS SELECT * FROM _df LIMIT 0')
         if by_col is not None and by_val is not None:
