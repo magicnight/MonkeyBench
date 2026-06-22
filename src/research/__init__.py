@@ -1,11 +1,17 @@
-"""研究层胶水(M3,待建)。
+"""研究层 —— 因子 / 综合评分 + 信号策略。
 
-职责:因子工程 + ML 训练 + 截面排序 → 产出"信号文件"(date × symbol → 分数)。
+- `scores`:Piotroski F-Score、Altman Z-Score、截面工具(rank/zscore/composite)。
+- `signal_strategy`:`SignalStrategy`(读信号文件 date×symbol→分数 → 竞技场;
+  信号是研究层与执行层的唯一接口,不碰引擎)。
 
-计划内容(见 RDP.md §4/§8、CLAUDE.md「接 Qlib」):
-  Qlib 工作流封装(walk-forward / purge+embargo / DSR/PBO)
-  SignalStrategy:读信号文件并映射成订单,实现 arena.Strategy
-
-铁律:信号文件是研究层与执行层的唯一接口,本层不碰引擎。
-排行榜数字只能来自竞技场引擎,不得用 Qlib 自带回测数字上榜。
+后续(M3):Qlib 工作流封装(walk-forward / purge+embargo / DSR/PBO)产出信号文件。
 """
+from .scores import (altman_z_score, composite_score, cross_section_rank,
+                     cross_section_zscore, piotroski_f_score)
+from .signal_strategy import SignalStrategy
+
+__all__ = [
+    "piotroski_f_score", "altman_z_score",
+    "cross_section_rank", "cross_section_zscore", "composite_score",
+    "SignalStrategy",
+]
