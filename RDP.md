@@ -143,7 +143,9 @@
 - `disclosure_date`(财报披露日期)→ **PIT 财务**(财报实际可知日);
 - `stk_limit`(每日涨跌停价)→ **引擎精确涨跌停**(用真实价,非 ±% 估算);
 - `suspend_d`(每日停复牌)→ **停牌精确标记**;
-- `sw_daily`(申万行业指数)→ 行业基准/轮动;`research_report`/`news`/`anns_d` → LLM 报告语料。
+- `sw_daily`(申万行业指数)→ 行业基准/轮动。
+- ⚠️ `research_report`/`news`/`anns_d`(大模型语料专题)→ **8000 积分实测无权限**,需单独开通;DD 报告语料增强降级(或以后换 akshare 等源补),**不影响核心**(评分/财务/对标/资金/股东)。
+- ✅ 实测可用(2026-06-22,23/24):PIT 三剑客 + `stk_factor_pro`(261 列因子)+ 财务补充 + 情绪(moneyflow/cyq_perf/top_list/margin/hk_hold)+ 股东/公司,均在权限内。
 
 > 完整清单:tushare-data skill(github `waditu-tushare/skills`)的 `references/数据接口.md` = 230 接口(分类 + 在线文档链接),封装可借入 `insight/tools`。**非目标**:港股 `hk_*` / 美股 `us_*` / 期货 `fut_*` / 期权 `opt_*` / 基金 `fund_*` / 债券 `cb_*` / 外汇 `fx_*` / 电影票房等一律不拉。
 > 节奏:当前全量(日线/估值/财务)跑完后,按优先级逐步补;每个数据集复用 backfill 的断点续传 + 限速 + provenance。
