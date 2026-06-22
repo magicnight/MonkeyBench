@@ -4,6 +4,8 @@
 (科创 ±20 / 主板 ±10 / ST ±5 ...)。这是项目核心问题的多票版:
 **动量扣完成本,能不能打过最好的那只猴子?**
 
+窗口由 START/END 指定(默认 2015–2016,backfill 已按交易日全覆盖这两年的全市场,
+含当时退市股 → 抗幸存者偏差)。
 运行:  .venv/bin/python run_arena.py
 """
 import sys
@@ -17,17 +19,21 @@ from arena import (Account, Arena, AShareRuleBook, BuyAndHoldEqual,
 from data.cache import MarketCache
 from data.feeds import TushareAFeed
 
-INITIAL_CASH = 10_000_000.0    # 多票需要更大账户才能分散(1000万)
-START = "20220101"             # 回测窗口起点(避免老主板票把 union 拉到 1990s)
+INITIAL_CASH = 10_000_000.0
+START = "20150101"
+END = "20161231"
 
 
 def main():
     cache = MarketCache()
+    s_d = f"{START[:4]}-{START[4:6]}-{START[6:]}"
+    e_d = f"{END[:4]}-{END[4:6]}-{END[6:]}"
     codes = [r[0] for r in cache.con.execute(
-        "SELECT DISTINCT ts_code FROM daily_bar ORDER BY ts_code").fetchall()]
+        "SELECT DISTINCT ts_code FROM daily_bar WHERE trade_date BETWEEN ? AND ? ORDER BY ts_code",
+        [s_d, e_d]).fetchall()]
     names = cache.get_names()
-    print(f"已落盘 {len(codes)} 票,构建多票 MarketData(>= {START})...")
-    data = TushareAFeed(codes, cache=cache, start=START).build()
+    print(f"窗口 {START}~{END} 内有数据的票:{len(codes)} 只,构建 MarketData...")
+    data = TushareAFeed(codes, cache=cache, start=START, end=END).build()
     print(f"标的:{len(data.symbols)} 只 | 交易日:{len(data.dates)} "
           f"({data.dates[0]} ~ {data.dates[-1]}) | 初始资金:{INITIAL_CASH:,.0f}\n")
 
@@ -37,7 +43,7 @@ def main():
     accounts += [
         Account("bnh", BuyAndHoldEqual(), Portfolio(INITIAL_CASH), rb, is_benchmark=True),
         Account("eqw", EqualWeightRebalance(period=21), Portfolio(INITIAL_CASH), rb, is_benchmark=True),
-        Account("mom", CrossSectionalMomentum(lookback=60, top_k=20, period=21),
+        Account("mom", CrossSectionalMomentum(lookback=60, top_k=30, period=21),
                 Portfolio(INITIAL_CASH), rb, is_benchmark=False),
     ]
 

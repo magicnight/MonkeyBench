@@ -93,12 +93,13 @@ class TushareAFeed(DataFeed):
 
     def __init__(self, ts_codes, cache: MarketCache | None = None,
                  client: TushareClient | None = None, refresh: bool = False,
-                 start: str | None = None):
+                 start: str | None = None, end: str | None = None):
         self.ts_codes = [ts_codes] if isinstance(ts_codes, str) else list(ts_codes)
         self.cache = cache or MarketCache()
         self.client = client
         self.refresh = refresh
-        self.start = start   # 'YYYYMMDD':只保留 >= start 的 bar(限制回测窗口)
+        self.start = start   # 'YYYYMMDD':只保留 >= start 的 bar
+        self.end = end       # 'YYYYMMDD':只保留 <= end 的 bar
 
     def _ensure(self, ts_code: str) -> None:
         _, _, n = self.cache.coverage(ts_code)
@@ -118,6 +119,8 @@ class TushareAFeed(DataFeed):
             df = self.cache.get_daily(code)
             if self.start:
                 df = df[df["trade_date"] >= self.start]
+            if self.end:
+                df = df[df["trade_date"] <= self.end]
             if len(df) == 0:
                 continue
             f = df["adj_factor"].ffill().fillna(1.0)
