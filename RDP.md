@@ -138,7 +138,15 @@
 | 低 | 公司信息/管理层 | `stock_company`/`stk_managers` | DD 报告 |
 | 低 | 宏观 | GDP/CPI/PPI/`shibor_lpr`/社融 | 择时/宏观因子 |
 
-> 节奏:当前全量(日线/估值/财务)跑完后,按上表优先级逐步补;每个数据集复用 backfill 的断点续传 + 限速 + provenance。
+**数据卫生 / PIT 关键接口**(从 tushare-data skill 的 230 接口清单里发现,直接服务铁律):
+- `stock_st`(历史每日 ST 列表)→ **PIT 板块判定**(取历史任一天 ST 名单,比 `namechange` 直接);
+- `disclosure_date`(财报披露日期)→ **PIT 财务**(财报实际可知日);
+- `stk_limit`(每日涨跌停价)→ **引擎精确涨跌停**(用真实价,非 ±% 估算);
+- `suspend_d`(每日停复牌)→ **停牌精确标记**;
+- `sw_daily`(申万行业指数)→ 行业基准/轮动;`research_report`/`news`/`anns_d` → LLM 报告语料。
+
+> 完整清单:tushare-data skill(github `waditu-tushare/skills`)的 `references/数据接口.md` = 230 接口(分类 + 在线文档链接),封装可借入 `insight/tools`。**非目标**:港股 `hk_*` / 美股 `us_*` / 期货 `fut_*` / 期权 `opt_*` / 基金 `fund_*` / 债券 `cb_*` / 外汇 `fx_*` / 电影票房等一律不拉。
+> 节奏:当前全量(日线/估值/财务)跑完后,按优先级逐步补;每个数据集复用 backfill 的断点续传 + 限速 + provenance。
 
 ---
 
