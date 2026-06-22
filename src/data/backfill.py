@@ -1,14 +1,16 @@
-"""批量 backfill —— **按交易日**循环(Tushare 官方推荐做法)。
+"""批量 backfill —— 全维度数据,按 Tushare 官方推荐的高效循环方式拉。
 
-为什么按 trade_date 而非 ts_code:全市场 5500+ 票,按票要循环 5500×2 次小调用;
-按交易日只需 ~250 天/年 × 2 次,一次 `daily(trade_date)` 拿全市场当天(~5500 行)。
-调用数砍半、连接锐减、每次数据量大 → 又快又稳,且增量每天仅 2 次调用、秒级。
+- **日线行情**(`daily`):按交易日(`trade_date`)循环,一次拿全市场当天 ~5500 行。
+- **估值**(`daily_basic`:PE/PB/PS/换手等):同样按交易日。
+- **财务**(`income`/`balancesheet`/`cashflow`/`fina_indicator`):用 `_vip` 接口按
+  **报告期**(`period`,季度)循环,一次拿全市场该期 ~6700 行 → ~44 期 × 4 表 ≈ 176 次调用。
 
-- 断点续传:backfill_log(dataset='daily_by_date')记已拉日期,重跑跳过。
-- 增量:只拉缺的交易日(每日跑一次补当天)。
-- 稳定:TushareClient 退避重试 + socket 超时(防 hang)。
+为什么这么拉:全市场全历史调用数最小(按天/按期,而非按 5500 票循环),连接锐减、
+抗跨境丢包,增量每日/每季秒级。
+- 断点续传:backfill_log 按数据集记已拉的日期/报告期,重跑跳过。
+- 稳定:TushareClient 退避重试 + socket 超时。
 
-运行:  PYTHONPATH=src .venv/bin/python -m data.backfill                  # 默认 2015 至今
+运行:  PYTHONPATH=src .venv/bin/python -m data.backfill                  # 默认 2015 至今,全维度
        PYTHONPATH=src .venv/bin/python -m data.backfill 20100101 20261231
 """
 from __future__ import annotations
@@ -19,7 +21,13 @@ from . import universe
 from .cache import MarketCache
 from .feeds import TushareClient, fetch_to_cache
 
-DATASET = "daily_by_date"
+# 财务四表:(本地表名, tushare vip 接口) —— vip 版支持按 period 拿全市场
+FIN_TABLES = [
+    ("income", "income_vip"),
+    ("balancesheet", "balancesheet_vip"),
+    ("cashflow", "cashflow_vip"),
+    ("fina_indicator", "fina_indicator_vip"),
+]
 
 
 def trading_days(client: TushareClient, start: str, end: str) -> list:
@@ -28,48 +36,73 @@ def trading_days(client: TushareClient, start: str, end: str) -> list:
     return sorted(cal["cal_date"].tolist())
 
 
-def backfill_by_date(cache: MarketCache, client: TushareClient,
-                     start: str, end: str, force: bool = False):
-    """按交易日逐日拉全市场 daily + adj_factor → 落库。"""
-    days = trading_days(client, start, end)
-    done = set() if force else cache.done_codes(DATASET)
+def quarters(start: str, end: str) -> list:
+    """季度报告期 YYYYMMDD(0331/0630/0930/1231),落在 [start, end] 内。"""
+    years = range(int(start[:4]), int(end[:4]) + 1)
+    qs = [f"{y}{md}" for y in years for md in ("0331", "0630", "0930", "1231")]
+    return [q for q in qs if start <= q <= end]
+
+
+def _by_date(cache, client, days, dataset, api, table=None, by_col=None):
+    """按交易日逐日拉某接口(全市场)→ 落库。daily 走 upsert_daily,其余走 upsert_table。"""
+    done = cache.done_codes(dataset)
     todo = [d for d in days if d not in done]
-    print(f"[by_date] 交易日 {len(days)} | 已完成 {len(days) - len(todo)} | 待拉 {len(todo)}")
-    ok = empty = failed = rows = 0
+    print(f"[{dataset}] 交易日 {len(days)} | 已完成 {len(days) - len(todo)} | 待拉 {len(todo)}")
+    ok = failed = rows = 0
     for i, d in enumerate(todo, 1):
         try:
-            daily = client.fetch("daily", trade_date=d)
-            if len(daily) == 0:
-                cache.log_backfill(DATASET, d, "empty", 0); empty += 1; continue
-            adj = client.fetch("adj_factor", trade_date=d)
-            merged = daily.merge(adj[["ts_code", "adj_factor"]], on="ts_code", how="left")
-            n = cache.upsert_daily(merged)
-            cache.log_backfill(DATASET, d, "ok", n)
-            ok += 1; rows += n
+            if dataset == "daily_by_date":
+                daily = client.fetch("daily", trade_date=d)
+                if len(daily) == 0:
+                    cache.log_backfill(dataset, d, "empty", 0); continue
+                adj = client.fetch("adj_factor", trade_date=d)
+                merged = daily.merge(adj[["ts_code", "adj_factor"]], on="ts_code", how="left")
+                n = cache.upsert_daily(merged)
+            else:
+                df = client.fetch(api, trade_date=d)
+                n = cache.upsert_table(table, df, by_col, d)
+            cache.log_backfill(dataset, d, "ok", n); ok += 1; rows += n
         except Exception as e:
-            cache.log_backfill(DATASET, d, "failed", 0); failed += 1
+            cache.log_backfill(dataset, d, "failed", 0); failed += 1
             print(f"  ✗ {d}: {str(e)[:60]}")
-        if i % 20 == 0:
-            print(f"  ...{i}/{len(todo)}  (ok {ok}, empty {empty}, failed {failed}, 累计 {rows:,} 行)")
-    print(f"[by_date] 完成:ok {ok}, empty {empty}, failed {failed}, 累计 {rows:,} 行")
-    return ok, failed
+        if i % 30 == 0:
+            print(f"  ...{i}/{len(todo)}  (ok {ok}, failed {failed}, {rows:,} 行)")
+    print(f"[{dataset}] 完成:ok {ok}, failed {failed}, {rows:,} 行")
 
 
 def backfill_daily(ts_codes, cache: MarketCache, client: TushareClient, force: bool = False):
-    """按 ts_code 逐票拉全历史(备用:补个别票时用;全市场请用 backfill_by_date)。"""
+    """按 ts_code 逐票拉全历史日线(备用:补个别票;全市场请用主流程)。"""
     done = set() if force else cache.done_codes("daily")
     todo = [c for c in ts_codes if c not in done]
-    print(f"[by_code] 共 {len(ts_codes)} | 待拉 {len(todo)}")
-    ok = failed = 0
+    print(f"[by_code] 待拉 {len(todo)}")
     for code in todo:
         try:
             n = fetch_to_cache(code, client, cache)
-            cache.log_backfill("daily", code, "ok", n); ok += 1
+            cache.log_backfill("daily", code, "ok", n)
         except Exception as e:
-            cache.log_backfill("daily", code, "failed", 0); failed += 1
+            cache.log_backfill("daily", code, "failed", 0)
             print(f"  ✗ {code}: {str(e)[:60]}")
-    print(f"[by_code] 完成:ok {ok}, failed {failed}")
-    return ok, failed
+
+
+def backfill_financials(cache: MarketCache, client: TushareClient,
+                        start: str, end: str, force: bool = False):
+    """按报告期(季度)拉财务四表(vip 接口,一次全市场)。"""
+    qs = quarters(start, end)
+    done = set() if force else cache.done_codes("financials")
+    todo = [q for q in qs if q not in done]
+    print(f"[financials] 报告期 {len(qs)} | 已完成 {len(qs) - len(todo)} | 待拉 {len(todo)}")
+    ok = failed = 0
+    for q in todo:
+        try:
+            for table, api in FIN_TABLES:
+                df = client.fetch(api, period=q)
+                cache.upsert_table(table, df, "end_date", q)
+            cache.log_backfill("financials", q, "ok", 0); ok += 1
+            print(f"  ✓ {q}")
+        except Exception as e:
+            cache.log_backfill("financials", q, "failed", 0); failed += 1
+            print(f"  ✗ {q}: {str(e)[:60]}")
+    print(f"[financials] 完成:ok {ok}, failed {failed}")
 
 
 def main():
@@ -77,12 +110,20 @@ def main():
     end = sys.argv[2] if len(sys.argv) > 2 else "20260622"
     cache = MarketCache()
     client = TushareClient()
+
     print("拉取 stock_basic(含退市)并落盘...")
     basic = universe.fetch_basic(client, include_delisted=True)
     cache.upsert_basic(basic)
-    print(f"  stock_basic: {len(basic)} 条")
-    print(f"按交易日 backfill:{start} ~ {end}\n")
-    backfill_by_date(cache, client, start, end)
+    print(f"  stock_basic: {len(basic)} 条\n")
+
+    days = trading_days(client, start, end)
+    print(f"=== 日线(daily)  {start}~{end} ===")
+    _by_date(cache, client, days, "daily_by_date", None)
+    print(f"\n=== 估值(daily_basic) ===")
+    _by_date(cache, client, days, "daily_basic", "daily_basic", table="daily_basic", by_col="trade_date")
+    print(f"\n=== 财务(income/balancesheet/cashflow/fina_indicator,vip 按期) ===")
+    backfill_financials(cache, client, start, end)
+
     cache.close()
 
 

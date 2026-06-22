@@ -117,7 +117,20 @@ class MarketCache:
         )
 
     def done_codes(self, dataset: str) -> set:
-        """某数据集已成功拉取的 ts_code 集合(续传时跳过)。"""
+        """某数据集已成功拉取的 ts_code / 日期 / 报告期集合(续传时跳过)。"""
         return {r[0] for r in self.con.execute(
             "SELECT ts_code FROM backfill_log WHERE dataset = ? AND status = 'ok'",
             [dataset]).fetchall()}
+
+    def upsert_table(self, table: str, df, by_col: str | None = None, by_val=None) -> int:
+        """通用宽表落库(财务/估值等):首次按 df schema 动态建表;
+        按 by_col=by_val 粒度先删后插(幂等,支持断点续传重跑)。"""
+        if df is None or len(df) == 0:
+            return 0
+        self.con.register("_df", df)
+        self.con.execute(f'CREATE TABLE IF NOT EXISTS "{table}" AS SELECT * FROM _df LIMIT 0')
+        if by_col is not None and by_val is not None:
+            self.con.execute(f'DELETE FROM "{table}" WHERE "{by_col}" = ?', [by_val])
+        self.con.execute(f'INSERT INTO "{table}" SELECT * FROM _df')
+        self.con.unregister("_df")
+        return len(df)
