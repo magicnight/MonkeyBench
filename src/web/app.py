@@ -81,6 +81,10 @@ def settings_form():
     has_key = bool(cfg.get("api_key"))
     key_note = '<span class="text-green-600 text-xs">已设置,留空则保留原 key</span>' if has_key else ''
     key_ph = "••••••••(已保存)" if has_key else "sk-..."
+    thinking_checked = "checked" if cfg.get("thinking") else ""
+    eff = cfg.get("reasoning_effort", "high")
+    high_sel, max_sel = ("selected" if eff != "max" else ""), ("selected" if eff == "max" else "")
+    models_str = ",".join(cfg.get("models", []))
     body = f"""<h1 class="text-2xl font-semibold mb-1">LLM 设置</h1>
 <p class="text-gray-500 mb-6">配置 OpenAI 兼容 API(DeepSeek V4 / GLM / MiniMax 等),用于 DD 报告生成。
   key 存本机 SQLite,不入库 git、不外传。</p>
@@ -88,15 +92,23 @@ def settings_form():
   <div><label class="block text-sm font-medium mb-1">Base URL</label>
     <input name="base_url" value="{cfg.get('base_url','')}" placeholder="https://api.deepseek.com/v1"
       class="w-full border border-gray-300 rounded-lg px-3 py-2" required></div>
-  <div><label class="block text-sm font-medium mb-1">模型</label>
-    <input name="model" value="{cfg.get('model','')}" placeholder="deepseek-chat"
-      class="w-full border border-gray-300 rounded-lg px-3 py-2" required></div>
+  <div><label class="block text-sm font-medium mb-1">模型(逗号分隔多个,如 pro + 轻量)</label>
+    <input name="models" value="{models_str}" placeholder="deepseek-v4-pro,deepseek-v4-flash"
+      class="w-full border border-gray-300 rounded-lg px-3 py-2" required>
+    <p class="text-xs text-gray-400 mt-1">分析时可选用哪个;第一个为默认。</p></div>
   <div><label class="block text-sm font-medium mb-1">API Key {key_note}</label>
     <input name="api_key" type="password" placeholder="{key_ph}"
       class="w-full border border-gray-300 rounded-lg px-3 py-2"></div>
-  <div><label class="block text-sm font-medium mb-1">温度</label>
+  <div><label class="block text-sm font-medium mb-1">温度(非思考模式用)</label>
     <input name="temperature" type="number" step="0.1" min="0" max="2" value="{cfg.get('temperature',0.3)}"
       class="w-32 border border-gray-300 rounded-lg px-3 py-2"></div>
+  <div class="flex items-center gap-4 flex-wrap">
+    <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="thinking" {thinking_checked}> 默认开启思考模式</label>
+    <label class="text-sm">思考强度
+      <select name="reasoning_effort" class="border border-gray-300 rounded-lg px-2 py-1 ml-1">
+        <option value="high" {high_sel}>high</option><option value="max" {max_sel}>max</option></select></label>
+  </div>
+  <p class="text-xs text-gray-400">DeepSeek 思考模式支持工具调用,但不支持温度,改用强度控制。</p>
   <div class="flex items-center gap-3 pt-2">
     <button type="submit" class="bg-indigo-600 text-white px-5 py-2 rounded-lg hover:bg-indigo-700">保存</button>
     <button type="button" class="border border-gray-300 px-5 py-2 rounded-lg hover:bg-gray-50"
@@ -110,11 +122,13 @@ def settings_form():
 
 
 @app.post("/settings")
-def settings_save(base_url: str = Form(...), model: str = Form(...),
-                  api_key: str = Form(""), temperature: float = Form(0.3)):
+def settings_save(base_url: str = Form(...), models: str = Form(...),
+                  api_key: str = Form(""), temperature: float = Form(0.3),
+                  thinking: str = Form(""), reasoning_effort: str = Form("high")):
     cur = get_llm_config()
     key = api_key.strip() or cur.get("api_key", "")    # 留空 → 保留旧 key
-    set_llm_config(base_url, model, key, temperature)
+    set_llm_config(base_url, models, key, temperature,
+                   thinking=(thinking == "on"), reasoning_effort=reasoning_effort)
     return RedirectResponse("/?saved=1", status_code=303)
 
 
@@ -135,9 +149,20 @@ def settings_test():
 
 @app.get("/analyze", response_class=HTMLResponse)
 def analyze_form():
-    body = """<h1 class="text-2xl font-semibold mb-1">公司多元分析</h1>
-<p class="text-gray-500 mb-6">拉本地全量数据 → 综合质量分 + 财务画像 + 自定义对标 → DD 报告。
-  配了 LLM key 走分析长报告,否则出确定性模板版。</p>
+    cfg = get_llm_config()
+    models = cfg.get("models", [])
+    if models:
+        opts = "".join(f'<option value="{m}">{m}</option>' for m in models)
+        tchk = "checked" if cfg.get("thinking") else ""
+        model_row = (f'<div class="flex items-end gap-4 flex-wrap">'
+                     f'<div><label class="block text-sm font-medium mb-1">模型</label>'
+                     f'<select name="model" class="border border-gray-300 rounded-lg px-3 py-2">{opts}</select></div>'
+                     f'<label class="flex items-center gap-2 text-sm pb-2"><input type="checkbox" name="thinking" {tchk}> 思考模式(更深·更慢)</label></div>')
+    else:
+        model_row = ('<p class="text-amber-600 text-sm bg-amber-50 rounded-lg p-3">未配 LLM key,'
+                     '将出确定性模板版报告。<a href="/settings" class="underline">去设置 →</a></p>')
+    body = f"""<h1 class="text-2xl font-semibold mb-1">公司多元分析</h1>
+<p class="text-gray-500 mb-6">拉本地全量数据 → 综合质量分 + 财务画像 + 投入信号 + 自定义对标 → DD 报告。</p>
 <form hx-post="/analyze" hx-target="#report" hx-swap="innerHTML" hx-indicator="#spin" class="space-y-3 max-w-lg mb-6">
   <div><label class="block text-sm font-medium mb-1">股票代码</label>
     <input name="ts_code" placeholder="688205.SH" required
@@ -145,9 +170,10 @@ def analyze_form():
   <div><label class="block text-sm font-medium mb-1">对标(可选,逗号分隔)</label>
     <input name="peers" placeholder="300308.SZ,300502.SZ,300394.SZ"
       class="w-full border border-gray-300 rounded-lg px-3 py-2"></div>
+  {model_row}
   <div class="flex items-center gap-3">
     <button class="bg-indigo-600 text-white px-5 py-2 rounded-lg hover:bg-indigo-700">生成报告</button>
-    <span id="spin" class="htmx-indicator text-gray-400 text-sm">生成中…(LLM 版需 30–60 秒)</span>
+    <span id="spin" class="htmx-indicator text-gray-400 text-sm">生成中…(LLM 思考版可能 1 分钟+)</span>
   </div>
 </form>
 <div id="report"></div>"""
@@ -155,19 +181,23 @@ def analyze_form():
 
 
 @app.post("/analyze", response_class=HTMLResponse)
-def analyze_run(ts_code: str = Form(...), peers: str = Form("")):
+def analyze_run(ts_code: str = Form(...), peers: str = Form(""),
+                model: str = Form(""), thinking: str = Form("")):
     from data.cache import MarketCache
     ts_code = ts_code.strip().upper()
     peer_list = [p.strip().upper() for p in peers.split(",") if p.strip()]
     cache = MarketCache(read_only=True)
     try:
         cfg = get_llm_config()
-        if cfg.get("api_key"):
+        if cfg.get("api_key") and cfg.get("models"):
             from insight.agent import OpenAICompatLLM
             from insight.report_agent import company_dd_report
-            llm = OpenAICompatLLM(cfg["model"], cfg["base_url"], cfg["api_key"], cfg.get("temperature", 0.3))
+            use_model = model or cfg["models"][0]
+            use_think = (thinking == "on")
+            llm = OpenAICompatLLM(use_model, cfg["base_url"], cfg["api_key"], cfg.get("temperature", 0.3),
+                                  thinking=use_think, reasoning_effort=cfg.get("reasoning_effort", "high"))
             md = company_dd_report(cache, llm, ts_code, peer_list or None)
-            engine = f"LLM · {cfg['model']}"
+            engine = f"LLM · {use_model}{' · 思考' if use_think else ''}"
         else:
             from insight.report_agent import dd_report_from_data
             md = dd_report_from_data(cache, ts_code, peer_list or None)
