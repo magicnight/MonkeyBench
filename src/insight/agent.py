@@ -19,18 +19,30 @@ class LLM(ABC):
 
 
 class OpenAICompatLLM(LLM):
-    """DeepSeek / GLM / MiniMax 等 OpenAI 兼容 endpoint(openai SDK 仅在此惰性导入)。"""
+    """DeepSeek / GLM / MiniMax 等 OpenAI 兼容 endpoint(openai SDK 仅在此惰性导入)。
 
-    def __init__(self, model: str, base_url: str, api_key: str, temperature: float = 0.3):
+    思考模式(thinking=True):DeepSeek 用 reasoning_effort + extra_body 开启,且**不支持
+    temperature/top_p**(改由 reasoning_effort 控制强度);思考模式仍支持工具调用。
+    非思考模式:走 temperature。reasoning_content(思维链)不回传给循环,只取 content。
+    """
+
+    def __init__(self, model: str, base_url: str, api_key: str, temperature: float = 0.3,
+                 thinking: bool = False, reasoning_effort: str = "high"):
         from openai import OpenAI
         self.client = OpenAI(base_url=base_url, api_key=api_key)
         self.model = model
         self.temperature = temperature
+        self.thinking = thinking
+        self.reasoning_effort = reasoning_effort
 
     def chat(self, messages, tools=None):
-        resp = self.client.chat.completions.create(
-            model=self.model, messages=messages,
-            tools=tools or None, temperature=self.temperature)
+        kwargs = {"model": self.model, "messages": messages, "tools": tools or None}
+        if self.thinking:                          # 思考模式:reasoning_effort + thinking,不传采样参数
+            kwargs["reasoning_effort"] = self.reasoning_effort
+            kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+        else:
+            kwargs["temperature"] = self.temperature
+        resp = self.client.chat.completions.create(**kwargs)
         m = resp.choices[0].message
         tcs = [{"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
                for tc in (m.tool_calls or [])]

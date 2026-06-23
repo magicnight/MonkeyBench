@@ -9,7 +9,7 @@
 """
 from __future__ import annotations
 
-from research.loaders import quality_signals
+from research.loaders import investment_trend, quality_signals
 
 
 def _latest_date(cache) -> str:
@@ -156,3 +156,12 @@ def register_company_tools(registry, cache) -> None:
             "date": {"type": "string", "description": "时点 YYYYMMDD,默认最新"}},
          "required": ["ts_codes"]},
     )(lambda ts_codes, date=None: peer_comparison(cache, ts_codes, date))
+
+    registry.register(
+        "investment_trend", "扩张投入信号:在建工程/固定资产/研发趋势 + 毛利率交叉验证,判断净利变化是"
+        "'扩张投入(机遇)'还是'衰退/竞争(风险)'。识别海外建厂/扩产能导致的投入型利润下降。",
+        {"type": "object", "properties": {
+            "ts_code": _CODE,
+            "date": {"type": "string", "description": "时点 YYYYMMDD,默认最新"}},
+         "required": ["ts_code"]},
+    )(lambda ts_code, date=None: investment_trend(cache, ts_code, date=date))

@@ -61,7 +61,7 @@ def test_dd_agent_with_peers():
 def test_build_dd_agent_has_tools():
     cache = make_cache()
     agent = build_dd_agent(cache, MockLLM())
-    assert len(agent.registry.openai_tools()) == 5
+    assert len(agent.registry.openai_tools()) == 6
     assert "peer_comparison" in agent.registry.names()
     assert "DD" in agent.system                          # system 已注入
     cache.close()

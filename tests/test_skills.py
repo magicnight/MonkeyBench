@@ -106,7 +106,7 @@ def test_registration():
     assert out["name"] == "德科立"
     out2 = reg.call("peer_comparison", {"ts_codes": ["688205.SH", "600519.SH"]})
     assert len(out2["peers"]) == 2
-    assert len(reg.openai_tools()) == 5                  # schema 可导出给 LLM
+    assert len(reg.openai_tools()) == 6                  # schema 可导出给 LLM(含 investment_trend)
     c.close()
 
 

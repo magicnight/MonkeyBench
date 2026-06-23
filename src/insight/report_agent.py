@@ -11,6 +11,8 @@ from __future__ import annotations
 from research.report import assemble_report, radar_svg
 
 from .agent import Agent, LLM
+from research.loaders import investment_trend
+
 from .skills import (company_profile, financial_history, peer_comparison,
                      price_performance, quality_score, register_company_tools)
 from .tools import ToolRegistry
@@ -98,6 +100,14 @@ def dd_report_from_data(cache, ts_code: str, peers: list | None = None,
         "估值与股价": f"最新 pe_ttm {latest.get('pe_ttm')}、pb {latest.get('pb')};"
                       f"复权涨跌:上市来 {_pct(price.get('since_listing'))}、近1年 {_pct(price.get('past_year'))}。",
     }
+    inv = investment_trend(cache, ts_code, date=date)
+    if inv.get("verdict") not in (None, "数据不足"):
+        lt = inv.get("latest", {})
+        sections["扩张 / 投入信号"] = (
+            f"**{inv['verdict']}** — {inv.get('note')}\n\n"
+            f"最新在建工程 {lt.get('cip_yi')} 亿、固定资产 {lt.get('fix_yi')} 亿;"
+            f"固定资产增速 {inv.get('fix_assets_growth')}、营收增速 {inv.get('revenue_growth')}、"
+            f"研发增速 {inv.get('rd_growth')}、毛利率变化 {inv.get('gross_margin_change')} pct。")
     if peers:
         pc = peer_comparison(cache, [ts_code] + list(peers), date)
         rows = ["| 代码 | 名称 | 质量分 | pe_ttm | pb | ROE | 净利率 |", "|---|---|---|---|---|---|---|"]
