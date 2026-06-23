@@ -34,3 +34,7 @@ data/cache/*
 .omc/
 .claude/
 .agent/
+data/app.db
+data/*.db
+data/*.db-wal
+data/*.db-shm
