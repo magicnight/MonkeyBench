@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from research.report import assemble_report, radar_svg
+from research.report import assemble_report, grouped_bar_svg, line_svg, radar_svg
 
 from .agent import Agent, LLM
 from data.codes import to_ts_code
@@ -105,21 +105,39 @@ def dd_report_from_data(cache, ts_code: str, peers: list | None = None,
         "估值与股价": f"最新 pe_ttm {latest.get('pe_ttm')}、pb {latest.get('pb')};"
                       f"复权涨跌:上市来 {_pct(price.get('since_listing'))}、近1年 {_pct(price.get('past_year'))}。",
     }
+    if annual:
+        yrs2 = [a["year"] for a in reversed(annual)]
+        fin_chart = line_svg(
+            {"营收(亿)": [a.get("revenue_yi") for a in reversed(annual)],
+             "净利(亿)": [a.get("net_profit_yi") for a in reversed(annual)]},
+            yrs2, title="营收 vs 净利趋势")
+        sections["财务历史"] += f'\n\n<div class="chart">{fin_chart}</div>'
     inv = investment_trend(cache, ts_code, date=date)
     if inv.get("verdict") not in (None, "数据不足"):
         lt = inv.get("latest", {})
+        sec = inv.get("series", [])
+        inv_svg = line_svg(
+            {"在建工程(亿)": [s.get("cip_yi") for s in sec],
+             "固定资产(亿)": [s.get("fix_yi") for s in sec]},
+            [s.get("year") for s in sec], title="扩张投入趋势") if sec else ""
+        inv_chart = f'<div class="chart">{inv_svg}</div>' if inv_svg else ""
         sections["扩张 / 投入信号"] = (
             f"**{inv['verdict']}** — {inv.get('note')}\n\n"
             f"最新在建工程 {lt.get('cip_yi')} 亿、固定资产 {lt.get('fix_yi')} 亿;"
             f"固定资产增速 {inv.get('fix_assets_growth')}、营收增速 {inv.get('revenue_growth')}、"
-            f"研发增速 {inv.get('rd_growth')}、毛利率变化 {inv.get('gross_margin_change')} pct。")
+            f"研发增速 {inv.get('rd_growth')}、毛利率变化 {inv.get('gross_margin_change')} pct。\n\n{inv_chart}")
     if peers:
         pc = peer_comparison(cache, [ts_code] + list(peers), date)
         rows = ["| 代码 | 名称 | 质量分 | pe_ttm | pb | ROE | 净利率 |", "|---|---|---|---|---|---|---|"]
         for p in pc["peers"]:
             rows.append(f"| {p['ts_code']} | {p.get('name')} | {p.get('quality_score')} | "
                         f"{p.get('pe_ttm')} | {p.get('pb')} | {p.get('latest_roe')} | {p.get('net_margin')} |")
-        sections["同业对标"] = "\n".join(rows)
+        names = [p.get("name") or p["ts_code"] for p in pc["peers"]]
+        bar = grouped_bar_svg(
+            {"ROE": [p.get("latest_roe") for p in pc["peers"]],
+             "净利率": [p.get("net_margin") for p in pc["peers"]]},
+            names, title="对标:ROE vs 净利率(%)")
+        sections["同业对标"] = "\n".join(rows) + f'\n\n<div class="chart">{bar}</div>'
 
     note = ("\n\n> ⚠️ 本报告为**确定性模板生成**(无 LLM);数字均来自本地数据工具。"
             "配 LLM key 后可由 agent 生成分析性长报告。")
