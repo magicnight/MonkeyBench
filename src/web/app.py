@@ -441,6 +441,63 @@ def leaderboard_page():
     return _page(body, "leaderboard")
 
 
+@app.get("/landing", response_class=HTMLResponse)
+def landing():
+    """项目门面单页(对应 monkey.operonsys.com 根)。"""
+    return """<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>MonkeyBench</title>
+<script src="https://cdn.tailwindcss.com"></script></head>
+<body class="bg-white text-gray-900">
+<section class="max-w-4xl mx-auto px-6 py-24 text-center">
+  <div class="text-6xl mb-4">🐒</div>
+  <h1 class="text-5xl font-bold mb-4">MonkeyBench</h1>
+  <p class="text-xl text-gray-600 mb-8 leading-relaxed">让量化策略和一群随机「猴子」在同一套虚拟撮合规则下同台竞技,<br>
+  用排行榜回答一个问题:<strong>机器学习在股市里,到底有没有用?</strong></p>
+  <a href="/" class="inline-block bg-indigo-600 text-white px-8 py-3 rounded-lg text-lg hover:bg-indigo-700">进入应用 →</a>
+</section>
+<section class="bg-gray-50 py-20"><div class="max-w-3xl mx-auto px-6 text-center">
+  <h2 class="text-3xl font-semibold mb-6">猴子,就是运气的天花板</h2>
+  <p class="text-lg text-gray-600">随机交易的猴子代表「零假设」。如果你的策略扣完真实成本后,打不过一群猴子里最好的那只,
+  它本质就是运气或噪声 —— 不是 alpha。</p>
+</div></section>
+<section class="py-20"><div class="max-w-4xl mx-auto px-6">
+  <h2 class="text-3xl font-semibold mb-10 text-center">目前的发现</h2>
+  <div class="grid sm:grid-cols-3 gap-6">
+    <div class="p-6 border border-gray-200 rounded-xl"><div class="text-xl font-medium mb-2">📈 动量</div><p class="text-gray-600 text-sm">扣成本后输给猴子,且强烈依赖时段</p></div>
+    <div class="p-6 border border-gray-200 rounded-xl"><div class="text-xl font-medium mb-2">📊 质量 / 价值</div><p class="text-gray-600 text-sm">walk-forward 逐年仅 2/10 胜率,DSR 不显著</p></div>
+    <div class="p-6 border border-gray-200 rounded-xl"><div class="text-xl font-medium mb-2">🐒 结论</div><p class="text-gray-600 text-sm">规则因子全部打不过猴子 —— 零结果也是结果</p></div>
+  </div>
+</div></section>
+<section class="bg-gray-50 py-20"><div class="max-w-4xl mx-auto px-6">
+  <h2 class="text-3xl font-semibold mb-10 text-center">三层架构</h2>
+  <div class="flex flex-col sm:flex-row gap-3 items-stretch justify-center text-center">
+    <div class="flex-1 p-6 bg-white border border-gray-200 rounded-xl"><div class="font-medium mb-2">研究层</div><p class="text-sm text-gray-600">因子 + ML 训练 → 信号文件</p></div>
+    <div class="self-center text-2xl text-gray-300">→</div>
+    <div class="flex-1 p-6 bg-white border border-gray-200 rounded-xl"><div class="font-medium mb-2">竞技场</div><p class="text-sm text-gray-600">唯一引擎 · T+1 · 真实成本撮合</p></div>
+    <div class="self-center text-2xl text-gray-300">→</div>
+    <div class="flex-1 p-6 bg-white border border-gray-200 rounded-xl"><div class="font-medium mb-2">排行榜</div><p class="text-sm text-gray-600">策略 + 猴子同台 · 归因</p></div>
+  </div>
+</div></section>
+<section class="py-16"><div class="max-w-4xl mx-auto px-6 text-center">
+  <h2 class="text-2xl font-semibold mb-6">四条铁律</h2>
+  <div class="flex flex-wrap justify-center gap-3">
+    <span class="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-full text-sm">一切虚拟核算</span>
+    <span class="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-full text-sm">唯一撮合引擎</span>
+    <span class="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-full text-sm">无未来函数</span>
+    <span class="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-full text-sm">数据卫生</span>
+  </div>
+</div></section>
+<section class="bg-indigo-600 text-white py-16 text-center"><div class="max-w-4xl mx-auto px-6">
+  <h2 class="text-3xl font-semibold mb-6">看看猴子赢在哪</h2>
+  <div class="flex gap-4 justify-center flex-wrap">
+    <a href="/leaderboard" class="bg-white text-indigo-600 px-6 py-3 rounded-lg hover:bg-gray-100">竞技场排行榜</a>
+    <a href="/analyze" class="border border-white px-6 py-3 rounded-lg hover:bg-indigo-500">分析一只股票</a>
+  </div>
+</div></section>
+<footer class="py-8 text-center text-gray-400 text-sm">MonkeyBench · 个人量化研究工具 · 全为研究分析,非投资建议</footer>
+</body></html>"""
+
+
 @app.get("/health")
 def health():
     return {"ok": True, "llm": llm_is_configured()}
