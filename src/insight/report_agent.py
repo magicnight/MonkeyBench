@@ -35,7 +35,9 @@ def company_dd_report(cache, llm: LLM, ts_code: str, peers: list | None = None,
     msg = f"请对 {ts_code} 撰写一份 DD 分析报告。"
     if peers:
         msg += f"并与以下标的对标:{', '.join(peers)}。"
-    return agent.run(msg, max_turns=max_turns) + "\n\n" + DISCLAIMER   # 系统统一追加免责
+    body = agent.run(msg, max_turns=max_turns)
+    charts = _charts_md(cache, ts_code, peers)        # LLM 只产文字,图表由代码确定性补上
+    return body + (f"\n\n{charts}" if charts else "") + "\n\n" + DISCLAIMER
 
 
 # --- 降级:无 LLM key 时,工具数据 + 确定性模板 → 结构化报告(含雷达图)---
@@ -46,6 +48,46 @@ def _pct(x):
 
 def _clamp01(x):
     return max(0.0, min(1.0, x))
+
+
+def _charts_md(cache, ts_code: str, peers: list | None = None, date: str | None = None) -> str:
+    """确定性图表区(雷达/财务/投入/对标),markdown(各图 <div class=chart> 包裹)。
+    LLM 版报告靠它补图表 —— LLM 只产文字,图表由代码确定性生成,保证每份都有。"""
+    prof = company_profile(cache, ts_code)
+    fin = financial_history(cache, ts_code)
+    q = quality_score(cache, ts_code, date)
+    annual = fin.get("annual") or []
+    cur = annual[0] if annual else {}
+    name = prof.get("name") or ts_code
+    blocks = []
+    if cur:
+        dims = {"ROE": _clamp01((cur.get("roe") or 0) / 30),
+                "净利率": _clamp01((cur.get("net_margin") or 0) / 50),
+                "毛利率": _clamp01((cur.get("gross_margin") or 0) / 100),
+                "低杠杆": _clamp01((100 - (cur.get("debt_ratio") or 0)) / 100),
+                "综合质量": q.get("quality_score") or 0.0}
+        blocks.append(f'<div class="chart">{radar_svg(dims, title=f"{name} 财务画像")}</div>')
+    if annual:
+        yrs = [a["year"] for a in reversed(annual)]
+        blocks.append('<div class="chart">' + line_svg(
+            {"营收(亿)": [a.get("revenue_yi") for a in reversed(annual)],
+             "净利(亿)": [a.get("net_profit_yi") for a in reversed(annual)]},
+            yrs, title="营收 vs 净利趋势") + '</div>')
+    inv = investment_trend(cache, ts_code, date=date)
+    sec = inv.get("series", [])
+    if sec:
+        blocks.append('<div class="chart">' + line_svg(
+            {"在建工程(亿)": [s.get("cip_yi") for s in sec],
+             "固定资产(亿)": [s.get("fix_yi") for s in sec]},
+            [s.get("year") for s in sec], title="扩张投入趋势") + '</div>')
+    if peers:
+        pc = peer_comparison(cache, [ts_code] + list(peers), date)
+        names = [p.get("name") or p["ts_code"] for p in pc["peers"]]
+        blocks.append('<div class="chart">' + grouped_bar_svg(
+            {"ROE": [p.get("latest_roe") for p in pc["peers"]],
+             "净利率": [p.get("net_margin") for p in pc["peers"]]},
+            names, title="对标:ROE vs 净利率(%)") + '</div>')
+    return ("## 图表\n\n" + "\n\n".join(blocks)) if blocks else ""
 
 
 def dd_report_from_data(cache, ts_code: str, peers: list | None = None,
