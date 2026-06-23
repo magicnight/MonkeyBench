@@ -15,6 +15,7 @@ web = [
     "apscheduler",
     "sqlalchemy",
     "python-multipart>=0.0.32",
+    "markdown>=3.10.2",
 ]  # FastAPI+HTMX 后端 / 调度 / SQLite 抽象
 llm = ["openai"]   # OpenAI 兼容 SDK(DeepSeek V4 / GLM-5.2 / MiniMax-3 可换)
 research = ["lightgbm", "scikit-learn", "pyarrow"]   # 自建轻量 ML(Qlib 不支持 py3.13;改移植其 Alpha158 因子表达式作对标)

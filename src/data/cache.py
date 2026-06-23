@@ -42,11 +42,13 @@ CREATE TABLE IF NOT EXISTS backfill_log (
 
 
 class MarketCache:
-    def __init__(self, db_path: str | Path = DEFAULT_DB):
+    def __init__(self, db_path: str | Path = DEFAULT_DB, read_only: bool = False):
         self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.con = duckdb.connect(str(self.db_path))
-        self.con.execute(_SCHEMA)
+        if not read_only:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.con = duckdb.connect(str(self.db_path), read_only=read_only)
+        if not read_only:                 # read_only 连接不能 CREATE TABLE(web 只读查询用)
+            self.con.execute(_SCHEMA)
 
     def close(self) -> None:
         self.con.close()

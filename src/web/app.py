@@ -40,11 +40,12 @@ def _page(body: str, active: str = "") -> str:
     return f"""<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>MonkeyBench</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://unpkg.com/htmx.org@1.9.10"></script></head>
+<script src="https://unpkg.com/htmx.org@1.9.10"></script>
+<style>.report h1{{font-size:1.5rem;font-weight:600;margin:.8rem 0}}.report h2{{font-size:1.15rem;font-weight:600;margin:1.2rem 0 .5rem;border-bottom:1px solid #eee;padding-bottom:.2rem}}.report table{{border-collapse:collapse;margin:.6rem 0;font-size:.9rem}}.report td,.report th{{border:1px solid #ddd;padding:4px 10px}}.report svg{{margin:1rem 0;max-width:100%;height:auto}}.report blockquote{{color:#666;border-left:3px solid #ddd;padding-left:1rem;margin:.6rem 0}}.htmx-indicator{{opacity:0;transition:opacity .2s}}.htmx-request .htmx-indicator{{opacity:1}}</style></head>
 <body class="bg-gray-50 text-gray-900 min-h-screen">
 <nav class="bg-white border-b border-gray-200"><div class="max-w-4xl mx-auto px-4 h-14 flex items-center gap-6">
   <span class="font-semibold text-lg">🐒 MonkeyBench</span>
-  {link('/', '仪表盘', 'home')}{link('/settings', 'LLM 设置', 'settings')}
+  {link('/', '仪表盘', 'home')}{link('/analyze', '公司分析', 'analyze')}{link('/settings', 'LLM 设置', 'settings')}
 </div></nav>
 <main class="max-w-4xl mx-auto px-4 py-8">{body}</main></body></html>"""
 
@@ -130,6 +131,55 @@ def settings_test():
         return f'<span class="text-green-600 text-sm">✓ 连接成功:{(r.choices[0].message.content or "")[:20]}</span>'
     except Exception as e:
         return f'<span class="text-red-600 text-sm">✗ {str(e)[:70]}</span>'
+
+
+@app.get("/analyze", response_class=HTMLResponse)
+def analyze_form():
+    body = """<h1 class="text-2xl font-semibold mb-1">公司多元分析</h1>
+<p class="text-gray-500 mb-6">拉本地全量数据 → 综合质量分 + 财务画像 + 自定义对标 → DD 报告。
+  配了 LLM key 走分析长报告,否则出确定性模板版。</p>
+<form hx-post="/analyze" hx-target="#report" hx-swap="innerHTML" hx-indicator="#spin" class="space-y-3 max-w-lg mb-6">
+  <div><label class="block text-sm font-medium mb-1">股票代码</label>
+    <input name="ts_code" placeholder="688205.SH" required
+      class="w-full border border-gray-300 rounded-lg px-3 py-2"></div>
+  <div><label class="block text-sm font-medium mb-1">对标(可选,逗号分隔)</label>
+    <input name="peers" placeholder="300308.SZ,300502.SZ,300394.SZ"
+      class="w-full border border-gray-300 rounded-lg px-3 py-2"></div>
+  <div class="flex items-center gap-3">
+    <button class="bg-indigo-600 text-white px-5 py-2 rounded-lg hover:bg-indigo-700">生成报告</button>
+    <span id="spin" class="htmx-indicator text-gray-400 text-sm">生成中…(LLM 版需 30–60 秒)</span>
+  </div>
+</form>
+<div id="report"></div>"""
+    return _page(body, "analyze")
+
+
+@app.post("/analyze", response_class=HTMLResponse)
+def analyze_run(ts_code: str = Form(...), peers: str = Form("")):
+    from data.cache import MarketCache
+    ts_code = ts_code.strip().upper()
+    peer_list = [p.strip().upper() for p in peers.split(",") if p.strip()]
+    cache = MarketCache(read_only=True)
+    try:
+        cfg = get_llm_config()
+        if cfg.get("api_key"):
+            from insight.agent import OpenAICompatLLM
+            from insight.report_agent import company_dd_report
+            llm = OpenAICompatLLM(cfg["model"], cfg["base_url"], cfg["api_key"], cfg.get("temperature", 0.3))
+            md = company_dd_report(cache, llm, ts_code, peer_list or None)
+            engine = f"LLM · {cfg['model']}"
+        else:
+            from insight.report_agent import dd_report_from_data
+            md = dd_report_from_data(cache, ts_code, peer_list or None)
+            engine = "确定性模板(未配 LLM key)"
+    except Exception as e:
+        return f'<div class="text-red-600 bg-red-50 rounded-lg p-4">生成失败:{str(e)[:200]}</div>'
+    finally:
+        cache.close()
+    import markdown as md_lib
+    html = md_lib.markdown(md, extensions=["tables"])
+    return (f'<div class="text-xs text-gray-400 mb-2">引擎:{engine}</div>'
+            f'<div class="report bg-white border border-gray-200 rounded-lg p-6">{html}</div>')
 
 
 @app.get("/health")

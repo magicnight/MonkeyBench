@@ -54,8 +54,15 @@ class Agent:
         for _ in range(max_turns):
             resp = self.llm.chat(messages, tools=self.registry.openai_tools())
             tool_calls = resp.get("tool_calls") or []
-            messages.append({"role": "assistant", "content": resp.get("content"),
-                             "tool_calls": tool_calls})
+            amsg = {"role": "assistant", "content": resp.get("content")}
+            if tool_calls:                            # OpenAI 要求嵌套格式 {id,type,function:{name,arguments}}
+                amsg["tool_calls"] = [
+                    {"id": tc["id"], "type": "function",
+                     "function": {"name": tc["name"],
+                                  "arguments": tc["arguments"] if isinstance(tc["arguments"], str)
+                                  else json.dumps(tc["arguments"], ensure_ascii=False)}}
+                    for tc in tool_calls]
+            messages.append(amsg)
             if not tool_calls:
                 return resp.get("content") or ""
             for tc in tool_calls:
