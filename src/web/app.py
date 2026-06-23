@@ -56,7 +56,7 @@ def _page(body: str, active: str = "") -> str:
 <body class="bg-gray-50 text-gray-900 min-h-screen">
 <nav class="bg-white border-b border-gray-200"><div class="max-w-4xl mx-auto px-4 h-14 flex items-center gap-6">
   <span class="font-semibold text-lg">🐒 MonkeyBench</span>
-  {link('/', '仪表盘', 'home')}{link('/analyze', '公司分析', 'analyze')}{link('/settings', 'LLM 设置', 'settings')}
+  {link('/', '仪表盘', 'home')}{link('/leaderboard', '竞技场', 'leaderboard')}{link('/analyze', '公司分析', 'analyze')}{link('/settings', 'LLM 设置', 'settings')}
 </div></nav>
 <main class="max-w-4xl mx-auto px-4 py-8">{body}</main></body></html>"""
 
@@ -394,6 +394,51 @@ async def analyze_start_stream(ts_code: str, peers: str = "", model: str = "", t
                 return
             await asyncio.sleep(0.25)
     return EventSourceResponse(gen())
+
+
+@app.get("/leaderboard", response_class=HTMLResponse)
+def leaderboard_page():
+    """竞技场排行榜:策略 vs 猴子(两时段)+ walk-forward + M4 验证结论(已跑竞测快照)。"""
+    from research.report import grouped_bar_svg, line_svg
+    cats = ["composite-v2", "quality-v1", "最好的猴子", "eqw"]
+    s1619 = [1.21, 0.64, 0.12, -0.01]
+    s2023 = [-0.39, -0.18, 0.76, 0.63]
+    bar = grouped_bar_svg({"2016–19 价值牛": s1619, "2020–23 成长/主题": s2023}, cats,
+                          title="夏普比率:策略 vs 猴子(两时段)")
+    yrs = ["2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023", "2024", "2025"]
+    v2y = [0.153, 0.201, -0.054, 0.050, -0.027, 0.033, -0.032, -0.048, 0.026, 0.134]
+    mky = [0.106, 0.052, -0.019, 0.123, 0.117, 0.069, 0.091, 0.003, 0.075, 0.142]
+    wf = line_svg({"composite-v2": v2y, "最好的猴子": mky}, yrs, title="walk-forward 逐年 OOS 夏普")
+    trows = "".join(
+        f"<tr><td>{c}</td><td>{a:+.2f}</td><td>{b:+.2f}</td></tr>"
+        for c, a, b in zip(cats, s1619, s2023))
+    body = f"""<div class="report">
+<h1>竞技场排行榜</h1>
+<p>核心问题:量化策略扣完真实成本(佣金/印花税/冲击),到底能不能打过<strong>随机交易的猴子</strong>?
+猴子 = 运气天花板;打不过猴子的"策略"本质是运气或噪声。下面是已跑的竞测快照。</p>
+
+<h2>策略 vs 猴子 · 两时段夏普</h2>
+<div class="chart">{bar}</div>
+<table><tr><th>策略</th><th>2016–19(价值牛)</th><th>2020–23(成长/主题)</th></tr>{trows}</table>
+<p><strong>风格反转</strong>:composite-v2(质量+估值+趋势+行业中性)在 2016–19 夏普 1.21 碾压猴子(0.12),
+到 2020–23 却跌到 −0.39 垫底、被猴子(0.76)反超 —— 同一策略换时段天差地别,说明它强烈依赖市场风格。</p>
+
+<h2>walk-forward:逐年样本外</h2>
+<div class="chart">{wf}</div>
+<p>把 composite-v2 逐年样本外检验:<strong>10 年里只有 2 年(2016/2017)跑赢最好的猴子</strong>。
+之前那个"夏普 1.21"是手挑时段 + 集中两年的产物。</p>
+
+<h2>M4 严格验证结论</h2>
+<ul>
+<li><strong>walk-forward 逐年胜率 2/10</strong> —— 没有跨年稳定性</li>
+<li><strong>DSR = 0.574</strong>(&lt;0.95)—— 算上多重检验 + 收益厚尾,夏普统计上不显著</li>
+<li><strong>PBO = 0.381</strong> —— 策略池里非纯噪声,但不足翻盘</li>
+</ul>
+<blockquote>至此动量、简单质量、composite-v2(质量+估值+趋势+行业中性,教科书全套)
+<strong>全部没有可持续 edge</strong> —— A 股规则因子扣成本 + 严格验证下,打不过猴子。
+这个"零结果"正是 MonkeyBench 要的科学诚实:防止单时段回测自欺。下一步看 ML 因子(M3)能不能跨过这道坎。</blockquote>
+</div>"""
+    return _page(body, "leaderboard")
 
 
 @app.get("/health")
