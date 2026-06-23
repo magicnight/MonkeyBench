@@ -192,36 +192,10 @@ def analyze_form():
 <div id="report"></div>
 <script>
 function cleanupES() {{ if (window._es) {{ try {{ window._es.close(); }} catch (e) {{}} window._es = null; }} }}
-async function startDD() {{
-  var ts = document.getElementById('ts_code').value.trim();
-  if (!ts) return false;
-  var peers = document.getElementById('peers').value.trim();
-  var mEl = document.getElementById('model'), tEl = document.getElementById('thinking');
-  var model = mEl ? mEl.value : '', thinking = (tEl && tEl.checked) ? 'on' : '';
-  cleanupES(); window._jobId = null; window._jobDone = false;
-  document.getElementById('gen').disabled = true;
-  document.getElementById('status').textContent = '提交任务…';
-  document.getElementById('report').innerHTML = '<pre id="stream" style="white-space:pre-wrap;font-family:inherit;color:#444;font-size:14px"></pre>';
-  var qs = 'ts_code=' + encodeURIComponent(ts) + '&peers=' + encodeURIComponent(peers)
-         + '&model=' + encodeURIComponent(model) + '&thinking=' + thinking;
-  try {{
-    var r = await fetch('/analyze/start?' + qs);
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    var j = await r.json();
-    window._jobId = j.job_id;
-    connectJob(j.job_id);
-  }} catch (err) {{
-    document.getElementById('status').textContent = '✗ 提交失败:' + (err && err.message ? err.message : err);
-    document.getElementById('gen').disabled = false;
-  }}
-  return false;
-}}
-function connectJob(jobId) {{
-  cleanupES(); window._buf = '';
+function attachHandlers(es) {{
   var status = document.getElementById('status'), report = document.getElementById('report');
   var gen = document.getElementById('gen');
-  var es = new EventSource('/job/' + jobId + '/stream');
-  window._es = es;
+  es.addEventListener('job', function(e) {{ window._jobId = e.data; }});
   es.addEventListener('status', function(e) {{ status.textContent = e.data; }});
   es.addEventListener('progress', function(e) {{ status.textContent = '📊 ' + e.data; }});
   es.addEventListener('token', function(e) {{
@@ -242,6 +216,29 @@ function connectJob(jobId) {{
       }}
     }}
   }};
+}}
+function startDD() {{
+  var ts = document.getElementById('ts_code').value.trim();
+  if (!ts) return false;
+  var peers = document.getElementById('peers').value.trim();
+  var mEl = document.getElementById('model'), tEl = document.getElementById('thinking');
+  var model = mEl ? mEl.value : '', thinking = (tEl && tEl.checked) ? 'on' : '';
+  cleanupES(); window._jobId = null; window._jobDone = false; window._buf = '';
+  document.getElementById('gen').disabled = true;
+  document.getElementById('status').textContent = '连接中…';
+  document.getElementById('report').innerHTML = '<pre id="stream" style="white-space:pre-wrap;font-family:inherit;color:#444;font-size:14px"></pre>';
+  var qs = 'ts_code=' + encodeURIComponent(ts) + '&peers=' + encodeURIComponent(peers)
+         + '&model=' + encodeURIComponent(model) + '&thinking=' + thinking;
+  var es = new EventSource('/analyze/start_stream?' + qs);   // 全 SSE,绕开不通的 fetch/XHR
+  window._es = es;
+  attachHandlers(es);
+  return false;
+}}
+function connectJob(jobId) {{
+  cleanupES(); window._buf = '';
+  var es = new EventSource('/job/' + jobId + '/stream');
+  window._es = es;
+  attachHandlers(es);
 }}
 document.addEventListener('visibilitychange', function() {{
   if (document.visibilityState === 'visible' && window._jobId && !window._jobDone) {{
@@ -364,6 +361,32 @@ async def job_stream(job_id: str):
                 yield job["events"][i]
                 i += 1
             if job.get("done"):
+                yield {"event": "done", "data": ""}
+                return
+            await asyncio.sleep(0.25)
+    return EventSourceResponse(gen())
+
+
+@app.get("/analyze/start_stream")
+async def analyze_start_stream(ts_code: str, peers: str = "", model: str = "", thinking: str = ""):
+    """EventSource 启动入口(全程 GET/SSE,绕开不通的 fetch):建 job + 后台线程 + 先推 job_id,再流式。"""
+    import asyncio
+    import threading
+    import uuid
+    job_id = uuid.uuid4().hex[:12]
+    JOBS[job_id] = {"events": [], "done": False}
+    threading.Thread(target=_run_job, args=(job_id, ts_code, peers, model, thinking),
+                     daemon=True).start()
+
+    async def gen():
+        yield {"event": "job", "data": job_id}   # 先把 job_id 推给前端(重连用)
+        i = 0
+        while True:
+            ev = JOBS[job_id]["events"]
+            while i < len(ev):
+                yield ev[i]
+                i += 1
+            if JOBS[job_id].get("done"):
                 yield {"event": "done", "data": ""}
                 return
             await asyncio.sleep(0.25)
