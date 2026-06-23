@@ -35,7 +35,7 @@ def company_dd_report(cache, llm: LLM, ts_code: str, peers: list | None = None,
     msg = f"请对 {ts_code} 撰写一份 DD 分析报告。"
     if peers:
         msg += f"并与以下标的对标:{', '.join(peers)}。"
-    return agent.run(msg, max_turns=max_turns)
+    return agent.run(msg, max_turns=max_turns) + "\n\n" + DISCLAIMER   # 系统统一追加免责
 
 
 # --- 降级:无 LLM key 时,工具数据 + 确定性模板 → 结构化报告(含雷达图)---

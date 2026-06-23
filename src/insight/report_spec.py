@@ -19,11 +19,15 @@ SECTIONS = [
     "综合判断与主要风险",
 ]
 
-# 固定免责声明(LLM 版与降级版结尾统一附上)
+# 固定免责声明(HTML inline 样式,自包含、markdown 渲染保留):
+# 分割线与正文分隔 + 居中 + serif 字体 + 灰色小字,视觉上与正文区分。
 DISCLAIMER = (
-    "> ⚠️ **免责声明**:本报告由 MonkeyBench 基于公开数据**自动生成**,所有数字来自本地数据库的"
-    "确定性工具计算,**仅供研究参考,不构成任何投资建议**。数据可能存在滞后或误差,"
-    "盈亏与风险由投资者自行承担。"
+    '<hr style="margin:2.2rem 0 1rem;border:none;border-top:1px solid #ddd">'
+    '<div style="text-align:center;font-family:Georgia,serif;font-size:12px;'
+    'color:#9a9a9a;line-height:1.7;padding:0 1.5rem">'
+    '免责声明:本报告由 MonkeyBench 基于公开数据自动生成,数字均来自本地数据库的确定性工具计算,'
+    '仅供研究参考,不构成任何投资建议。数据可能存在滞后或误差,盈亏与风险由投资者自行承担。'
+    '</div>'
 )
 
 DD_SYSTEM = f"""你是严谨的 A 股尽职调查(DD)分析师。基于工具返回的本地数据,撰写一份客观的公司分析长报告。
@@ -36,6 +40,4 @@ DD_SYSTEM = f"""你是严谨的 A 股尽职调查(DD)分析师。基于工具返
 {chr(10).join(f"  {i + 1}. {s}" for i, s in enumerate(SECTIONS))}
 - 客观中立、多空都讲:质量分要结合趋势(高分位也可能掩盖盈利恶化);investment_trend 要点明净利
   变化是"扩张投入(机遇)"还是"衰退/竞争(风险)";股价与基本面有背离要明确指出。全文中文。
-- **报告结尾必须原样附上下面这段免责声明**:
-
-{DISCLAIMER}"""
+- 报告正文**无需**写免责声明,系统会自动统一追加。"""
