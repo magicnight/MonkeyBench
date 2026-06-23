@@ -14,11 +14,12 @@ from arena import (Account, Arena, AShareRuleBook, BuyAndHoldEqual,
                    RandomTrader, leaderboard, render, summarize)
 from data.cache import MarketCache
 from data.feeds import TushareAFeed
-from research.loaders import quality_signals
+from research.loaders import composite_signals, quality_signals
 from research.signal_strategy import SignalStrategy
 
 INITIAL_CASH = 10_000_000.0
-START, END = "20200101", "20231231"   # 财务齐全的窗口
+START = sys.argv[1] if len(sys.argv) > 1 else "20200101"   # 可传窗口:run_score.py 20160101 20191231
+END = sys.argv[2] if len(sys.argv) > 2 else "20231231"
 
 
 def main():
@@ -42,7 +43,10 @@ def main():
         Account("mom", CrossSectionalMomentum(lookback=60, top_k=30, period=21),
                 Portfolio(INITIAL_CASH), rb, is_benchmark=False),
         Account("quality", SignalStrategy(lambda d: quality_signals(cache, d),
-                                          top_k=30, period=21, name="📊 quality-score"),
+                                          top_k=30, period=21, name="📊 quality-v1"),
+                Portfolio(INITIAL_CASH), rb, is_benchmark=False),
+        Account("composite", SignalStrategy(lambda d: composite_signals(cache, d),
+                                            top_k=30, period=21, name="📊 composite-v2(质量+估值+趋势+行业中性)"),
                 Portfolio(INITIAL_CASH), rb, is_benchmark=False),
     ]
     arena = Arena(data, accounts).run()
