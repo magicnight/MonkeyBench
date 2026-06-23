@@ -16,6 +16,13 @@ from .config import get_llm_config, llm_is_configured, set_llm_config
 
 app = FastAPI(title="MonkeyBench")
 JOBS: dict = {}   # 后台报告任务:job_id → {"events":[SSE事件dict], "done":bool}
+
+
+@app.middleware("http")
+async def _no_cache(request, call_next):
+    resp = await call_next(request)
+    resp.headers["Cache-Control"] = "no-store"   # 防浏览器缓存旧页面/JS
+    return resp
 DUCKDB = "data/cache/market.duckdb"
 _LABELS = {"daily_bar": "日线", "daily_basic": "估值", "fina_indicator": "财务指标",
            "stk_factor_pro": "技术因子(261列)", "stk_limit": "涨跌停",
@@ -184,12 +191,14 @@ def analyze_form():
 </form>
 <div id="report"></div>
 <script>
+function cleanupES() {{ if (window._es) {{ try {{ window._es.close(); }} catch (e) {{}} window._es = null; }} }}
 async function startDD() {{
   var ts = document.getElementById('ts_code').value.trim();
   if (!ts) return false;
   var peers = document.getElementById('peers').value.trim();
   var mEl = document.getElementById('model'), tEl = document.getElementById('thinking');
   var model = mEl ? mEl.value : '', thinking = (tEl && tEl.checked) ? 'on' : '';
+  cleanupES(); window._jobId = null; window._jobDone = false;
   document.getElementById('gen').disabled = true;
   document.getElementById('status').textContent = '提交任务…';
   document.getElementById('report').innerHTML = '<pre id="stream" style="white-space:pre-wrap;font-family:inherit;color:#444;font-size:14px"></pre>';
@@ -197,20 +206,22 @@ async function startDD() {{
   fd.append('ts_code', ts); fd.append('peers', peers); fd.append('model', model); fd.append('thinking', thinking);
   try {{
     var r = await fetch('/analyze/start', {{method: 'POST', body: fd}});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     var j = await r.json();
     window._jobId = j.job_id;
     connectJob(j.job_id);
   }} catch (err) {{
-    document.getElementById('status').textContent = '✗ 提交失败';
+    document.getElementById('status').textContent = '✗ 提交失败:' + (err && err.message ? err.message : err);
     document.getElementById('gen').disabled = false;
   }}
   return false;
 }}
 function connectJob(jobId) {{
-  window._jobActive = true; window._buf = '';
+  cleanupES(); window._buf = '';
   var status = document.getElementById('status'), report = document.getElementById('report');
   var gen = document.getElementById('gen');
   var es = new EventSource('/job/' + jobId + '/stream');
+  window._es = es;
   es.addEventListener('status', function(e) {{ status.textContent = e.data; }});
   es.addEventListener('progress', function(e) {{ status.textContent = '📊 ' + e.data; }});
   es.addEventListener('token', function(e) {{
@@ -220,15 +231,23 @@ function connectJob(jobId) {{
     s.textContent = window._buf;
   }});
   es.addEventListener('final', function(e) {{ report.innerHTML = e.data; status.textContent = '✓ 完成'; }});
-  es.addEventListener('failed', function(e) {{ status.textContent = '✗ ' + e.data; }});
-  es.addEventListener('done', function(e) {{ es.close(); window._jobActive = false; gen.disabled = false; }});
+  es.addEventListener('failed', function(e) {{ status.textContent = '✗ ' + e.data; window._jobDone = true; }});
+  es.addEventListener('done', function(e) {{ cleanupES(); window._jobDone = true; gen.disabled = false; }});
   es.onerror = function() {{
-    if (window._jobActive && es.readyState === 2) {{
-      status.textContent = '重连中…(后台任务不受影响)';
-      setTimeout(function() {{ if (window._jobActive) connectJob(jobId); }}, 1200);
+    if (es.readyState === 2) {{
+      window._es = null;
+      if (!window._jobDone && window._jobId) {{
+        status.textContent = '重连中…(后台任务不受影响)';
+        setTimeout(function() {{ if (!window._jobDone && window._jobId) connectJob(window._jobId); }}, 1500);
+      }}
     }}
   }};
 }}
+document.addEventListener('visibilitychange', function() {{
+  if (document.visibilityState === 'visible' && window._jobId && !window._jobDone) {{
+    if (!window._es || window._es.readyState === 2) connectJob(window._jobId);
+  }}
+}});
 </script>"""
     return _page(body, "analyze")
 
