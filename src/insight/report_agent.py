@@ -53,8 +53,8 @@ def _clamp01(x):
 def _valuation_chart(cache, ts_code: str) -> str:
     """pe_ttm 年末估值历史折线(daily_basic;trade_date 是 VARCHAR,按年取最后一条)。"""
     rows = cache.con.execute(
-        "WITH v AS (SELECT substr(trade_date,1,4) yr, pe_ttm, "
-        "ROW_NUMBER() OVER (PARTITION BY substr(trade_date,1,4) ORDER BY trade_date DESC) rn "
+        "WITH v AS (SELECT substr(CAST(trade_date AS VARCHAR),1,4) yr, pe_ttm, "
+        "ROW_NUMBER() OVER (PARTITION BY substr(CAST(trade_date AS VARCHAR),1,4) ORDER BY trade_date DESC) rn "
         "FROM daily_basic WHERE ts_code=? AND pe_ttm IS NOT NULL AND pe_ttm>0) "
         "SELECT yr, pe_ttm FROM v WHERE rn=1 ORDER BY yr", [to_ts_code(ts_code)]).fetchall()
     if len(rows) < 3:
