@@ -15,6 +15,7 @@ from data.codes import to_ts_code
 from .config import get_llm_config, llm_is_configured, set_llm_config
 
 app = FastAPI(title="MonkeyBench")
+JOBS: dict = {}   # 后台报告任务:job_id → {"events":[SSE事件dict], "done":bool}
 DUCKDB = "data/cache/market.duckdb"
 _LABELS = {"daily_bar": "日线", "daily_basic": "估值", "fina_indicator": "财务指标",
            "stk_factor_pro": "技术因子(261列)", "stk_limit": "涨跌停",
@@ -183,29 +184,50 @@ def analyze_form():
 </form>
 <div id="report"></div>
 <script>
-function startDD() {{
+async function startDD() {{
   var ts = document.getElementById('ts_code').value.trim();
   if (!ts) return false;
   var peers = document.getElementById('peers').value.trim();
   var mEl = document.getElementById('model'), tEl = document.getElementById('thinking');
   var model = mEl ? mEl.value : '', thinking = (tEl && tEl.checked) ? 'on' : '';
+  document.getElementById('gen').disabled = true;
+  document.getElementById('status').textContent = '提交任务…';
+  document.getElementById('report').innerHTML = '<pre id="stream" style="white-space:pre-wrap;font-family:inherit;color:#444;font-size:14px"></pre>';
+  var fd = new FormData();
+  fd.append('ts_code', ts); fd.append('peers', peers); fd.append('model', model); fd.append('thinking', thinking);
+  try {{
+    var r = await fetch('/analyze/start', {{method: 'POST', body: fd}});
+    var j = await r.json();
+    window._jobId = j.job_id;
+    connectJob(j.job_id);
+  }} catch (err) {{
+    document.getElementById('status').textContent = '✗ 提交失败';
+    document.getElementById('gen').disabled = false;
+  }}
+  return false;
+}}
+function connectJob(jobId) {{
+  window._jobActive = true; window._buf = '';
   var status = document.getElementById('status'), report = document.getElementById('report');
   var gen = document.getElementById('gen');
-  gen.disabled = true;
-  report.innerHTML = '<pre id="stream" style="white-space:pre-wrap;font-family:inherit;color:#444;font-size:14px"></pre>';
-  var stream = document.getElementById('stream'), buf = '';
-  status.textContent = '连接中…';
-  var url = '/analyze/stream?ts_code=' + encodeURIComponent(ts) + '&peers=' + encodeURIComponent(peers)
-          + '&model=' + encodeURIComponent(model) + '&thinking=' + thinking;
-  var es = new EventSource(url);
+  var es = new EventSource('/job/' + jobId + '/stream');
   es.addEventListener('status', function(e) {{ status.textContent = e.data; }});
   es.addEventListener('progress', function(e) {{ status.textContent = '📊 ' + e.data; }});
-  es.addEventListener('token', function(e) {{ buf += e.data; stream.textContent = buf; }});
+  es.addEventListener('token', function(e) {{
+    window._buf += e.data;
+    var s = document.getElementById('stream');
+    if (!s) {{ report.innerHTML = '<pre id="stream" style="white-space:pre-wrap;font-family:inherit;color:#444;font-size:14px"></pre>'; s = document.getElementById('stream'); }}
+    s.textContent = window._buf;
+  }});
   es.addEventListener('final', function(e) {{ report.innerHTML = e.data; status.textContent = '✓ 完成'; }});
   es.addEventListener('failed', function(e) {{ status.textContent = '✗ ' + e.data; }});
-  es.addEventListener('done', function(e) {{ es.close(); gen.disabled = false; }});
-  es.onerror = function() {{ if (es.readyState === 2) {{ status.textContent = status.textContent || '连接中断'; gen.disabled = false; }} }};
-  return false;
+  es.addEventListener('done', function(e) {{ es.close(); window._jobActive = false; gen.disabled = false; }});
+  es.onerror = function() {{
+    if (window._jobActive && es.readyState === 2) {{
+      status.textContent = '重连中…(后台任务不受影响)';
+      setTimeout(function() {{ if (window._jobActive) connectJob(jobId); }}, 1200);
+    }}
+  }};
 }}
 </script>"""
     return _page(body, "analyze")
@@ -243,50 +265,90 @@ def analyze_run(ts_code: str = Form(...), peers: str = Form(""),
             f'<div class="report bg-white border border-gray-200 rounded-lg p-6">{html}</div>')
 
 
-@app.get("/analyze/stream")
-def analyze_stream(ts_code: str, peers: str = "", model: str = "", thinking: str = ""):
-    """流式生成报告(SSE):工具调用推 progress、最终行文逐字推 token、收尾推渲染好的 final。"""
-    def gen():
-        import markdown as md_lib
-        from data.cache import MarketCache
-        from insight.report_agent import (_apply_charts, build_charts, build_dd_agent,
-                                          dd_report_from_data)
-        from insight.report_spec import DISCLAIMER
-        ts = to_ts_code(ts_code.strip())
-        peer_list = [to_ts_code(p.strip()) for p in peers.split(",") if p.strip()]
-        cache = MarketCache(read_only=True)
-        try:
-            cfg = get_llm_config()
-            if cfg.get("api_key") and cfg.get("models"):
-                from insight.agent import OpenAICompatLLM
-                use_model = model or cfg["models"][0]
-                use_think = (thinking == "on")
-                llm = OpenAICompatLLM(use_model, cfg["base_url"], cfg["api_key"],
-                                      cfg.get("temperature", 0.3), thinking=use_think,
-                                      reasoning_effort=cfg.get("reasoning_effort", "high"))
-                agent = build_dd_agent(cache, llm)
-                msg = f"请对 {ts} 撰写一份 DD 分析报告。"
-                if peer_list:
-                    msg += f"并与以下标的对标:{', '.join(peer_list)}。"
-                yield {"event": "status", "data": f"{use_model}{' · 思考' if use_think else ''} 生成中…"}
-                buf = ""
-                for ev in agent.run_stream(msg):
-                    if ev["type"] == "progress":
-                        yield {"event": "progress", "data": f"调用 {ev['text']}"}
-                    else:
-                        buf += ev["text"]
-                        yield {"event": "token", "data": ev["text"]}
-                full = _apply_charts(buf, build_charts(cache, ts, peer_list)) + "\n\n" + DISCLAIMER
-                yield {"event": "final", "data": md_lib.markdown(full, extensions=["tables"])}
+def _gen_report_events(cache, ts_code: str, peers: str, model: str, thinking: str):
+    """报告事件流(generator,yield {event,data}):status/progress/token/final。
+    SSE 直连与后台 job 共用。异常由调用方捕获。"""
+    import markdown as md_lib
+    from insight.report_agent import (_apply_charts, build_charts, build_dd_agent,
+                                      dd_report_from_data)
+    from insight.report_spec import DISCLAIMER
+    ts = to_ts_code(ts_code.strip())
+    peer_list = [to_ts_code(p.strip()) for p in peers.split(",") if p.strip()]
+    cfg = get_llm_config()
+    if cfg.get("api_key") and cfg.get("models"):
+        from insight.agent import OpenAICompatLLM
+        use_model = model or cfg["models"][0]
+        use_think = (thinking == "on")
+        llm = OpenAICompatLLM(use_model, cfg["base_url"], cfg["api_key"], cfg.get("temperature", 0.3),
+                              thinking=use_think, reasoning_effort=cfg.get("reasoning_effort", "high"))
+        agent = build_dd_agent(cache, llm)
+        msg = f"请对 {ts} 撰写一份 DD 分析报告。"
+        if peer_list:
+            msg += f"并与以下标的对标:{', '.join(peer_list)}。"
+        yield {"event": "status", "data": f"{use_model}{' · 思考' if use_think else ''} 生成中…"}
+        buf = ""
+        for ev in agent.run_stream(msg):
+            if ev["type"] == "progress":
+                yield {"event": "progress", "data": f"调用 {ev['text']}"}
             else:
-                md = dd_report_from_data(cache, ts, peer_list or None)
-                yield {"event": "status", "data": "确定性模板版(未配 LLM key)"}
-                yield {"event": "final", "data": md_lib.markdown(md, extensions=["tables"])}
-        except Exception as e:
-            yield {"event": "failed", "data": str(e)[:200]}
-        finally:
-            cache.close()
+                buf += ev["text"]
+                yield {"event": "token", "data": ev["text"]}
+        full = _apply_charts(buf, build_charts(cache, ts, peer_list)) + "\n\n" + DISCLAIMER
+        yield {"event": "final", "data": md_lib.markdown(full, extensions=["tables"])}
+    else:
+        md = dd_report_from_data(cache, ts, peer_list or None)
+        yield {"event": "status", "data": "确定性模板版(未配 LLM key)"}
+        yield {"event": "final", "data": md_lib.markdown(md, extensions=["tables"])}
+
+
+def _run_job(job_id: str, ts_code: str, peers: str, model: str, thinking: str):
+    """后台线程:把报告事件写进 JOBS[job_id]['events'](前端断连不影响,可重连续看)。"""
+    from data.cache import MarketCache
+    job = JOBS[job_id]
+    cache = MarketCache(read_only=True)
+    try:
+        for ev in _gen_report_events(cache, ts_code, peers, model, thinking):
+            job["events"].append(ev)
+    except Exception as e:
+        job["events"].append({"event": "failed", "data": str(e)[:200]})
+    finally:
+        cache.close()
+        job["done"] = True
+
+
+@app.post("/analyze/start")
+def analyze_start(ts_code: str = Form(...), peers: str = Form(""),
+                  model: str = Form(""), thinking: str = Form("")):
+    """启动后台报告任务,立即返回 job_id;生成在线程里跑,前端用 /job/{id}/stream 拉。"""
+    import threading
+    import uuid
+    job_id = uuid.uuid4().hex[:12]
+    JOBS[job_id] = {"events": [], "done": False}
+    threading.Thread(target=_run_job, args=(job_id, ts_code, peers, model, thinking),
+                     daemon=True).start()
+    return {"job_id": job_id}
+
+
+@app.get("/job/{job_id}/stream")
+async def job_stream(job_id: str):
+    """SSE 拉某 job 的事件(从头推 buffer + 实时新事件);断连重连会重推全 buffer 续看。"""
+    import asyncio
+
+    async def gen():
+        job = JOBS.get(job_id)
+        if not job:
+            yield {"event": "failed", "data": "任务不存在或已过期"}
             yield {"event": "done", "data": ""}
+            return
+        i = 0
+        while True:
+            while i < len(job["events"]):
+                yield job["events"][i]
+                i += 1
+            if job.get("done"):
+                yield {"event": "done", "data": ""}
+                return
+            await asyncio.sleep(0.25)
     return EventSourceResponse(gen())
 
 
