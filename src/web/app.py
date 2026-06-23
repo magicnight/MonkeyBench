@@ -241,8 +241,9 @@ function connectJob(jobId) {{
   attachHandlers(es);
 }}
 document.addEventListener('visibilitychange', function() {{
-  if (document.visibilityState === 'visible' && window._jobId && !window._jobDone) {{
-    if (!window._es || window._es.readyState === 2) connectJob(window._jobId);
+  if (document.visibilityState === 'visible' && window._jobId) {{
+    document.getElementById('status').textContent = '切回,重连续看…';
+    connectJob(window._jobId);   // 切回强制重连读 buffer 续(含已完成的 final),不依赖 _es 状态
   }}
 }});
 </script>"""
