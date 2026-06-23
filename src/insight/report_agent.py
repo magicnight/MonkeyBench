@@ -53,6 +53,8 @@ def _clamp01(x):
 def _charts_md(cache, ts_code: str, peers: list | None = None, date: str | None = None) -> str:
     """确定性图表区(雷达/财务/投入/对标),markdown(各图 <div class=chart> 包裹)。
     LLM 版报告靠它补图表 —— LLM 只产文字,图表由代码确定性生成,保证每份都有。"""
+    ts_code = to_ts_code(ts_code)
+    peers = [to_ts_code(p) for p in peers] if peers else peers
     prof = company_profile(cache, ts_code)
     fin = financial_history(cache, ts_code)
     q = quality_score(cache, ts_code, date)
