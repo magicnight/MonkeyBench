@@ -17,6 +17,15 @@ class LLM(ABC):
     def chat(self, messages: List[dict], tools: Optional[List[dict]] = None) -> dict:
         """统一返回:{"content": str|None, "tool_calls": [{"id","name","arguments"}]}。"""
 
+    def chat_stream(self, messages: List[dict], tools: Optional[List[dict]] = None):
+        """流式:逐块 yield {"content": 增量} / 最后 {"tool_calls":[...]}。
+        默认降级为非流式 chat 单次产出;真流式由子类 override(OpenAICompatLLM)。"""
+        r = self.chat(messages, tools)
+        if r.get("content"):
+            yield {"content": r["content"]}
+        if r.get("tool_calls"):
+            yield {"tool_calls": r["tool_calls"]}
+
 
 class OpenAICompatLLM(LLM):
     """DeepSeek / GLM / MiniMax 等 OpenAI 兼容 endpoint(openai SDK 仅在此惰性导入)。
@@ -47,6 +56,31 @@ class OpenAICompatLLM(LLM):
         tcs = [{"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
                for tc in (m.tool_calls or [])]
         return {"content": m.content, "tool_calls": tcs}
+
+    def chat_stream(self, messages, tools=None):
+        kwargs = {"model": self.model, "messages": messages, "tools": tools or None, "stream": True}
+        if self.thinking:
+            kwargs["reasoning_effort"] = self.reasoning_effort
+            kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+        else:
+            kwargs["temperature"] = self.temperature
+        acc: dict = {}
+        for chunk in self.client.chat.completions.create(**kwargs):
+            if not chunk.choices:
+                continue
+            d = chunk.choices[0].delta
+            if getattr(d, "content", None):
+                yield {"content": d.content}
+            for tc in (getattr(d, "tool_calls", None) or []):
+                a = acc.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
+                if tc.id:
+                    a["id"] = tc.id
+                if tc.function and tc.function.name:
+                    a["name"] = tc.function.name
+                if tc.function and tc.function.arguments:
+                    a["arguments"] += tc.function.arguments
+        if acc:
+            yield {"tool_calls": [acc[i] for i in sorted(acc)]}
 
 
 class Agent:
@@ -86,3 +120,42 @@ class Agent:
                 messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
                                  "name": tc["name"], "content": content})
         return "(达到最大工具调用轮次,未收敛)"
+
+    def run_stream(self, user_msg: str, max_turns: int = 8):
+        """流式版 run:generator。yield {"type":"token","text":增量}(最终行文逐字)、
+        {"type":"progress","text":工具名}(工具调用阶段)。最终文本已在 token 流里。"""
+        messages: List[dict] = []
+        if self.system:
+            messages.append({"role": "system", "content": self.system})
+        messages.append({"role": "user", "content": user_msg})
+
+        for _ in range(max_turns):
+            content = ""
+            tool_calls: list = []
+            for delta in self.llm.chat_stream(messages, tools=self.registry.openai_tools()):
+                if delta.get("content"):
+                    content += delta["content"]
+                    yield {"type": "token", "text": delta["content"]}
+                if delta.get("tool_calls"):
+                    tool_calls = delta["tool_calls"]
+            amsg = {"role": "assistant", "content": content or None}
+            if tool_calls:
+                amsg["tool_calls"] = [
+                    {"id": tc["id"], "type": "function",
+                     "function": {"name": tc["name"],
+                                  "arguments": tc["arguments"] if isinstance(tc["arguments"], str)
+                                  else json.dumps(tc["arguments"], ensure_ascii=False)}}
+                    for tc in tool_calls]
+            messages.append(amsg)
+            if not tool_calls:
+                return
+            for tc in tool_calls:
+                yield {"type": "progress", "text": tc["name"]}
+                try:
+                    out = json.dumps(self.registry.call(tc["name"], tc.get("arguments", {})),
+                                     ensure_ascii=False, default=str)
+                except Exception as e:
+                    out = json.dumps({"error": str(e)}, ensure_ascii=False)
+                messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
+                                 "name": tc["name"], "content": out})
+        yield {"type": "token", "text": "(达到最大工具调用轮次)"}

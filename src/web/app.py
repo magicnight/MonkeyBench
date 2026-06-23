@@ -8,6 +8,9 @@ from __future__ import annotations
 import duckdb
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sse_starlette.sse import EventSourceResponse
+
+from data.codes import to_ts_code
 
 from .config import get_llm_config, llm_is_configured, set_llm_config
 
@@ -158,27 +161,53 @@ def analyze_form():
         tchk = "checked" if cfg.get("thinking") else ""
         model_row = (f'<div class="flex items-end gap-4 flex-wrap">'
                      f'<div><label class="block text-sm font-medium mb-1">模型</label>'
-                     f'<select name="model" class="border border-gray-300 rounded-lg px-3 py-2">{opts}</select></div>'
-                     f'<label class="flex items-center gap-2 text-sm pb-2"><input type="checkbox" name="thinking" {tchk}> 思考模式(更深·更慢)</label></div>')
+                     f'<select id="model" class="border border-gray-300 rounded-lg px-3 py-2">{opts}</select></div>'
+                     f'<label class="flex items-center gap-2 text-sm pb-2"><input type="checkbox" id="thinking" {tchk}> 思考模式(更深·更慢)</label></div>')
     else:
         model_row = ('<p class="text-amber-600 text-sm bg-amber-50 rounded-lg p-3">未配 LLM key,'
                      '将出确定性模板版报告。<a href="/settings" class="underline">去设置 →</a></p>')
     body = f"""<h1 class="text-2xl font-semibold mb-1">公司多元分析</h1>
 <p class="text-gray-500 mb-6">拉本地全量数据 → 综合质量分 + 财务画像 + 投入信号 + 自定义对标 → DD 报告。</p>
-<form hx-post="/analyze" hx-target="#report" hx-swap="innerHTML" hx-indicator="#spin" class="space-y-3 max-w-lg mb-6">
+<form id="af" onsubmit="return startDD()" class="space-y-3 max-w-lg mb-6">
   <div><label class="block text-sm font-medium mb-1">股票代码</label>
-    <input name="ts_code" placeholder="688205(带不带 .SH/.SZ 都行)" required
+    <input id="ts_code" placeholder="688205(带不带 .SH/.SZ 都行)" required
       class="w-full border border-gray-300 rounded-lg px-3 py-2"></div>
   <div><label class="block text-sm font-medium mb-1">对标(可选,逗号分隔)</label>
-    <input name="peers" placeholder="300308.SZ,300502.SZ,300394.SZ"
+    <input id="peers" placeholder="300308.SZ,300502.SZ,300394.SZ"
       class="w-full border border-gray-300 rounded-lg px-3 py-2"></div>
   {model_row}
   <div class="flex items-center gap-3">
-    <button class="bg-indigo-600 text-white px-5 py-2 rounded-lg hover:bg-indigo-700">生成报告</button>
-    <span id="spin" class="htmx-indicator text-gray-400 text-sm">生成中…(LLM 思考版可能 1 分钟+)</span>
+    <button id="gen" class="bg-indigo-600 text-white px-5 py-2 rounded-lg hover:bg-indigo-700">生成报告</button>
+    <span id="status" class="text-gray-400 text-sm"></span>
   </div>
 </form>
-<div id="report"></div>"""
+<div id="report"></div>
+<script>
+function startDD() {{
+  var ts = document.getElementById('ts_code').value.trim();
+  if (!ts) return false;
+  var peers = document.getElementById('peers').value.trim();
+  var mEl = document.getElementById('model'), tEl = document.getElementById('thinking');
+  var model = mEl ? mEl.value : '', thinking = (tEl && tEl.checked) ? 'on' : '';
+  var status = document.getElementById('status'), report = document.getElementById('report');
+  var gen = document.getElementById('gen');
+  gen.disabled = true;
+  report.innerHTML = '<pre id="stream" style="white-space:pre-wrap;font-family:inherit;color:#444;font-size:14px"></pre>';
+  var stream = document.getElementById('stream'), buf = '';
+  status.textContent = '连接中…';
+  var url = '/analyze/stream?ts_code=' + encodeURIComponent(ts) + '&peers=' + encodeURIComponent(peers)
+          + '&model=' + encodeURIComponent(model) + '&thinking=' + thinking;
+  var es = new EventSource(url);
+  es.addEventListener('status', function(e) {{ status.textContent = e.data; }});
+  es.addEventListener('progress', function(e) {{ status.textContent = '📊 ' + e.data; }});
+  es.addEventListener('token', function(e) {{ buf += e.data; stream.textContent = buf; }});
+  es.addEventListener('final', function(e) {{ report.innerHTML = e.data; status.textContent = '✓ 完成'; }});
+  es.addEventListener('failed', function(e) {{ status.textContent = '✗ ' + e.data; }});
+  es.addEventListener('done', function(e) {{ es.close(); gen.disabled = false; }});
+  es.onerror = function() {{ if (es.readyState === 2) {{ status.textContent = status.textContent || '连接中断'; gen.disabled = false; }} }};
+  return false;
+}}
+</script>"""
     return _page(body, "analyze")
 
 
@@ -212,6 +241,53 @@ def analyze_run(ts_code: str = Form(...), peers: str = Form(""),
     html = md_lib.markdown(md, extensions=["tables"])
     return (f'<div class="text-xs text-gray-400 mb-2">引擎:{engine}</div>'
             f'<div class="report bg-white border border-gray-200 rounded-lg p-6">{html}</div>')
+
+
+@app.get("/analyze/stream")
+def analyze_stream(ts_code: str, peers: str = "", model: str = "", thinking: str = ""):
+    """流式生成报告(SSE):工具调用推 progress、最终行文逐字推 token、收尾推渲染好的 final。"""
+    def gen():
+        import markdown as md_lib
+        from data.cache import MarketCache
+        from insight.report_agent import (_apply_charts, build_charts, build_dd_agent,
+                                          dd_report_from_data)
+        from insight.report_spec import DISCLAIMER
+        ts = to_ts_code(ts_code.strip())
+        peer_list = [to_ts_code(p.strip()) for p in peers.split(",") if p.strip()]
+        cache = MarketCache(read_only=True)
+        try:
+            cfg = get_llm_config()
+            if cfg.get("api_key") and cfg.get("models"):
+                from insight.agent import OpenAICompatLLM
+                use_model = model or cfg["models"][0]
+                use_think = (thinking == "on")
+                llm = OpenAICompatLLM(use_model, cfg["base_url"], cfg["api_key"],
+                                      cfg.get("temperature", 0.3), thinking=use_think,
+                                      reasoning_effort=cfg.get("reasoning_effort", "high"))
+                agent = build_dd_agent(cache, llm)
+                msg = f"请对 {ts} 撰写一份 DD 分析报告。"
+                if peer_list:
+                    msg += f"并与以下标的对标:{', '.join(peer_list)}。"
+                yield {"event": "status", "data": f"{use_model}{' · 思考' if use_think else ''} 生成中…"}
+                buf = ""
+                for ev in agent.run_stream(msg):
+                    if ev["type"] == "progress":
+                        yield {"event": "progress", "data": f"调用 {ev['text']}"}
+                    else:
+                        buf += ev["text"]
+                        yield {"event": "token", "data": ev["text"]}
+                full = _apply_charts(buf, build_charts(cache, ts, peer_list)) + "\n\n" + DISCLAIMER
+                yield {"event": "final", "data": md_lib.markdown(full, extensions=["tables"])}
+            else:
+                md = dd_report_from_data(cache, ts, peer_list or None)
+                yield {"event": "status", "data": "确定性模板版(未配 LLM key)"}
+                yield {"event": "final", "data": md_lib.markdown(md, extensions=["tables"])}
+        except Exception as e:
+            yield {"event": "failed", "data": str(e)[:200]}
+        finally:
+            cache.close()
+            yield {"event": "done", "data": ""}
+    return EventSourceResponse(gen())
 
 
 @app.get("/health")
