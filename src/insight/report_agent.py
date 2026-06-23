@@ -50,6 +50,43 @@ def _clamp01(x):
     return max(0.0, min(1.0, x))
 
 
+def _valuation_chart(cache, ts_code: str) -> str:
+    """pe_ttm 年末估值历史折线(daily_basic;trade_date 是 VARCHAR,按年取最后一条)。"""
+    rows = cache.con.execute(
+        "WITH v AS (SELECT substr(trade_date,1,4) yr, pe_ttm, "
+        "ROW_NUMBER() OVER (PARTITION BY substr(trade_date,1,4) ORDER BY trade_date DESC) rn "
+        "FROM daily_basic WHERE ts_code=? AND pe_ttm IS NOT NULL AND pe_ttm>0) "
+        "SELECT yr, pe_ttm FROM v WHERE rn=1 ORDER BY yr", [to_ts_code(ts_code)]).fetchall()
+    if len(rows) < 3:
+        return ""
+    return ('<div class="chart">' + line_svg({"pe_ttm(年末)": [r[1] for r in rows]},
+            [r[0] for r in rows], title="pe_ttm 估值历史") + '</div>')
+
+
+def _divergence_chart(cache, ts_code: str) -> str:
+    """股价 vs 基本面背离:年度复权股价 与 净利,各按首年=100 指数化双线(背离一眼可见)。"""
+    ts = to_ts_code(ts_code)
+    px = cache.con.execute(
+        "WITH p AS (SELECT strftime(trade_date,'%Y') yr, close*adj_factor adj, "
+        "ROW_NUMBER() OVER (PARTITION BY strftime(trade_date,'%Y') ORDER BY trade_date DESC) rn "
+        "FROM daily_bar WHERE ts_code=? AND adj_factor IS NOT NULL AND close IS NOT NULL) "
+        "SELECT yr, adj FROM p WHERE rn=1 ORDER BY yr", [ts]).fetchall()
+    ni = dict(cache.con.execute(
+        "SELECT substr(CAST(end_date AS VARCHAR),1,4), n_income FROM income "
+        "WHERE ts_code=? AND end_date%10000=1231 AND n_income IS NOT NULL", [ts]).fetchall())
+    px_d = dict(px)
+    yrs = [y for y, _ in px if y in ni and ni[y] and px_d[y]]
+    if len(yrs) < 3:
+        return ""
+    p0, n0 = px_d[yrs[0]], ni[yrs[0]]
+    if p0 <= 0 or n0 <= 0:
+        return ""
+    return ('<div class="chart">' + line_svg(
+        {"股价(复权,首年=100)": [round(px_d[y] / p0 * 100, 1) for y in yrs],
+         "净利(首年=100)": [round(ni[y] / n0 * 100, 1) for y in yrs]},
+        yrs, title="股价 vs 净利(背离)") + '</div>')
+
+
 def build_charts(cache, ts_code: str, peers: list | None = None, date: str | None = None) -> dict:
     """所有图表 → {key: '<div class=chart>svg</div>'}。key:radar/financials/investment/peers。
     LLM 版按 [[CHART:key]] 占位符嵌入对应章节,降级版按节直接取用。"""
@@ -89,6 +126,10 @@ def build_charts(cache, ts_code: str, peers: list | None = None, date: str | Non
             {"ROE": [p.get("latest_roe") for p in pc["peers"]],
              "净利率": [p.get("net_margin") for p in pc["peers"]]},
             names, title="对标:ROE vs 净利率(%)") + '</div>'
+    if (v := _valuation_chart(cache, ts_code)):
+        ch["valuation"] = v
+    if (d := _divergence_chart(cache, ts_code)):
+        ch["divergence"] = d
     return ch
 
 
@@ -155,6 +196,7 @@ def dd_report_from_data(cache, ts_code: str, peers: list | None = None,
         "估值与股价": f"最新 pe_ttm {latest.get('pe_ttm')}、pb {latest.get('pb')};"
                       f"复权涨跌:上市来 {_pct(price.get('since_listing'))}、近1年 {_pct(price.get('past_year'))}。",
     }
+    sections["估值与股价"] += _valuation_chart(cache, ts_code) + _divergence_chart(cache, ts_code)
     if annual:
         yrs2 = [a["year"] for a in reversed(annual)]
         fin_chart = line_svg(
