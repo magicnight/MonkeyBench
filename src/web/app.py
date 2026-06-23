@@ -240,12 +240,14 @@ function connectJob(jobId) {{
   window._es = es;
   attachHandlers(es);
 }}
-document.addEventListener('visibilitychange', function() {{
-  if (document.visibilityState === 'visible' && window._jobId) {{
+function _resume() {{
+  if (window._jobId) {{   // 切回总重连读 buffer 续(含已完成的 final),不依赖 _es / _jobDone
     document.getElementById('status').textContent = '切回,重连续看…';
-    connectJob(window._jobId);   // 切回强制重连读 buffer 续(含已完成的 final),不依赖 _es 状态
+    connectJob(window._jobId);
   }}
-}});
+}}
+document.addEventListener('visibilitychange', function() {{ if (document.visibilityState === 'visible') _resume(); }});
+window.addEventListener('focus', _resume);   // 双保险:visibilitychange 不触发时,focus 兜底
 </script>"""
     return _page(body, "analyze")
 
