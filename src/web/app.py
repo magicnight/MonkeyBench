@@ -167,7 +167,7 @@ def analyze_form():
 <p class="text-gray-500 mb-6">拉本地全量数据 → 综合质量分 + 财务画像 + 投入信号 + 自定义对标 → DD 报告。</p>
 <form hx-post="/analyze" hx-target="#report" hx-swap="innerHTML" hx-indicator="#spin" class="space-y-3 max-w-lg mb-6">
   <div><label class="block text-sm font-medium mb-1">股票代码</label>
-    <input name="ts_code" placeholder="688205.SH" required
+    <input name="ts_code" placeholder="688205(带不带 .SH/.SZ 都行)" required
       class="w-full border border-gray-300 rounded-lg px-3 py-2"></div>
   <div><label class="block text-sm font-medium mb-1">对标(可选,逗号分隔)</label>
     <input name="peers" placeholder="300308.SZ,300502.SZ,300394.SZ"

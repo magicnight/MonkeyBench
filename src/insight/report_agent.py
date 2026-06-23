@@ -11,6 +11,7 @@ from __future__ import annotations
 from research.report import assemble_report, radar_svg
 
 from .agent import Agent, LLM
+from data.codes import to_ts_code
 from research.loaders import investment_trend
 
 from .skills import (company_profile, financial_history, peer_comparison,
@@ -38,6 +39,8 @@ def build_dd_agent(cache, llm: LLM) -> Agent:
 def company_dd_report(cache, llm: LLM, ts_code: str, peers: list | None = None,
                       max_turns: int = 8) -> str:
     """对 ts_code 产出 DD 长报告;peers 给定则做自定义对标。返回 Markdown 文本。"""
+    ts_code = to_ts_code(ts_code)
+    peers = [to_ts_code(p) for p in peers] if peers else peers
     agent = build_dd_agent(cache, llm)
     msg = f"请对 {ts_code} 撰写一份 DD 分析报告。"
     if peers:
@@ -60,6 +63,8 @@ def dd_report_from_data(cache, ts_code: str, peers: list | None = None,
     """无 LLM 的降级 DD 报告:本地工具数据 + 确定性模板 → Markdown(含财务画像雷达图)。
 
     数字全来自工具、纯模板排版(不做分析性行文)。配 key 后用 company_dd_report 出分析长报告。"""
+    ts_code = to_ts_code(ts_code)
+    peers = [to_ts_code(p) for p in peers] if peers else peers
     prof = company_profile(cache, ts_code)
     if prof.get("error"):
         return f"# {ts_code}\n\n未找到该股票。"
