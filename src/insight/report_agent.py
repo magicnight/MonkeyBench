@@ -8,25 +8,15 @@
 """
 from __future__ import annotations
 
+from data.codes import to_ts_code
+from research.loaders import investment_trend
 from research.report import assemble_report, grouped_bar_svg, line_svg, radar_svg
 
 from .agent import Agent, LLM
-from data.codes import to_ts_code
-from research.loaders import investment_trend
-
+from .report_spec import DD_SYSTEM, DISCLAIMER
 from .skills import (company_profile, financial_history, peer_comparison,
                      price_performance, quality_score, register_company_tools)
 from .tools import ToolRegistry
-
-DD_SYSTEM = """你是严谨的 A 股尽职调查(DD)分析师。基于工具返回的本地数据,撰写一份客观的公司分析长报告。
-
-硬性要求:
-- 所有数字必须来自工具调用结果,严禁自行估算或编造;工具没返回的就明确写"数据缺失"。
-- 先用工具收集:company_profile(概况估值)、financial_history(财务历史)、price_performance(股价)、quality_score(综合质量分);若用户给了对标股,调用 peer_comparison。
-- 数据齐了再动笔,报告结构:
-  ① 一句话定性  ② 公司与业务  ③ 财务质量(趋势 + 多空两面)  ④ 估值水平
-  ⑤ 股价 vs 基本面(重点识别"背离")  ⑥ 同业对标(如有)  ⑦ 综合判断与主要风险
-- 客观中立、多空都讲;质量分要结合趋势解读(高分位也可能掩盖盈利恶化)。全文中文。"""
 
 
 def build_dd_agent(cache, llm: LLM) -> Agent:
@@ -139,6 +129,6 @@ def dd_report_from_data(cache, ts_code: str, peers: list | None = None,
             names, title="对标:ROE vs 净利率(%)")
         sections["同业对标"] = "\n".join(rows) + f'\n\n<div class="chart">{bar}</div>'
 
-    note = ("\n\n> ⚠️ 本报告为**确定性模板生成**(无 LLM);数字均来自本地数据工具。"
-            "配 LLM key 后可由 agent 生成分析性长报告。")
+    note = ("\n\n*(确定性模板版:数字均来自本地数据工具;配 LLM key 走 agent 分析长报告。)*\n\n"
+            + DISCLAIMER)
     return assemble_report(ts_code, name, scores, sections, q.get("date") or "", radar) + note
