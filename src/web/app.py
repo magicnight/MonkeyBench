@@ -202,10 +202,10 @@ async function startDD() {{
   document.getElementById('gen').disabled = true;
   document.getElementById('status').textContent = '提交任务…';
   document.getElementById('report').innerHTML = '<pre id="stream" style="white-space:pre-wrap;font-family:inherit;color:#444;font-size:14px"></pre>';
-  var fd = new FormData();
-  fd.append('ts_code', ts); fd.append('peers', peers); fd.append('model', model); fd.append('thinking', thinking);
+  var qs = 'ts_code=' + encodeURIComponent(ts) + '&peers=' + encodeURIComponent(peers)
+         + '&model=' + encodeURIComponent(model) + '&thinking=' + thinking;
   try {{
-    var r = await fetch('/analyze/start', {{method: 'POST', body: fd}});
+    var r = await fetch('/analyze/start?' + qs);
     if (!r.ok) throw new Error('HTTP ' + r.status);
     var j = await r.json();
     window._jobId = j.job_id;
@@ -335,10 +335,9 @@ def _run_job(job_id: str, ts_code: str, peers: str, model: str, thinking: str):
         job["done"] = True
 
 
-@app.post("/analyze/start")
-def analyze_start(ts_code: str = Form(...), peers: str = Form(""),
-                  model: str = Form(""), thinking: str = Form("")):
-    """启动后台报告任务,立即返回 job_id;生成在线程里跑,前端用 /job/{id}/stream 拉。"""
+@app.get("/analyze/start")
+def analyze_start(ts_code: str, peers: str = "", model: str = "", thinking: str = ""):
+    """启动后台报告任务,立即返回 job_id(用 GET:POST 经 tailscale serve 链路到不了,GET 稳)。"""
     import threading
     import uuid
     job_id = uuid.uuid4().hex[:12]
