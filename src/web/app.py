@@ -135,16 +135,18 @@ def settings_save(base_url: str = Form(...), models: str = Form(...),
 @app.post("/settings/test", response_class=HTMLResponse)
 def settings_test():
     cfg = get_llm_config()
-    if not cfg.get("api_key"):
-        return '<span class="text-amber-600 text-sm">请先填 key 并保存</span>'
+    if not cfg.get("api_key") or not cfg.get("models"):
+        return '<span class="text-amber-600 text-sm">请先填模型和 key 并保存</span>'
+    model = cfg["models"][0]                      # 用第一个模型测连通
     try:
         from openai import OpenAI
-        client = OpenAI(base_url=cfg["base_url"], api_key=cfg["api_key"], timeout=20)
+        client = OpenAI(base_url=cfg["base_url"], api_key=cfg["api_key"], timeout=30)
         r = client.chat.completions.create(
-            model=cfg["model"], messages=[{"role": "user", "content": "ping, reply OK"}], max_tokens=5)
-        return f'<span class="text-green-600 text-sm">✓ 连接成功:{(r.choices[0].message.content or "")[:20]}</span>'
+            model=model, messages=[{"role": "user", "content": "ping"}], max_tokens=64)
+        txt = (r.choices[0].message.content or "").strip()[:20]
+        return f'<span class="text-green-600 text-sm">✓ {model} 连接成功:{txt or "(空)"}</span>'
     except Exception as e:
-        return f'<span class="text-red-600 text-sm">✗ {str(e)[:70]}</span>'
+        return f'<span class="text-red-600 text-sm">✗ {str(e)[:90]}</span>'
 
 
 @app.get("/analyze", response_class=HTMLResponse)
