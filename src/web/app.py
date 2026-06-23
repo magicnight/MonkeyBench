@@ -195,7 +195,7 @@ function cleanupES() {{ if (window._es) {{ try {{ window._es.close(); }} catch (
 function attachHandlers(es) {{
   var status = document.getElementById('status'), report = document.getElementById('report');
   var gen = document.getElementById('gen');
-  es.addEventListener('job', function(e) {{ window._jobId = e.data; }});
+  es.addEventListener('job', function(e) {{ window._jobId = e.data; connectJob(e.data); }});
   es.addEventListener('status', function(e) {{ status.textContent = e.data; }});
   es.addEventListener('progress', function(e) {{ status.textContent = '📊 ' + e.data; }});
   es.addEventListener('token', function(e) {{
